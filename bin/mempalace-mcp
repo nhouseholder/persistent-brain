@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# mempalace-mcp — start the MemPalace MCP server for the palace at $MEMPALACE_PALACE
+# (or ~/.mempalace/global by default). Resolves the pipx venv python correctly.
+set -euo pipefail
+
+PALACE="${MEMPALACE_PALACE:-$HOME/.mempalace/global}"
+
+# Try common locations for the mempalace venv python, in order of likelihood.
+CANDIDATES=(
+  "$HOME/.local/pipx/venvs/mempalace/bin/python"
+  "$HOME/.local/share/pipx/venvs/mempalace/bin/python"
+  "/opt/homebrew/opt/mempalace/libexec/bin/python"
+)
+
+if command -v pipx >/dev/null 2>&1; then
+  VENV_ROOT="$(pipx environment --value PIPX_LOCAL_VENVS 2>/dev/null || true)"
+  [ -n "$VENV_ROOT" ] && CANDIDATES=("$VENV_ROOT/mempalace/bin/python" "${CANDIDATES[@]}")
+fi
+
+PY=""
+for p in "${CANDIDATES[@]}"; do
+  [ -x "$p" ] && PY="$p" && break
+done
+
+if [ -z "$PY" ]; then
+  # Fallback: use system python if mempalace is importable there
+  if python3 -c "import mempalace.mcp_server" 2>/dev/null; then
+    PY="python3"
+  else
+    echo "mempalace-mcp: couldn't locate mempalace venv python. Install with: pipx install mempalace" >&2
+    exit 127
+  fi
+fi
+
+exec "$PY" -m mempalace.mcp_server --palace "$PALACE"

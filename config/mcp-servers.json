@@ -1,0 +1,16 @@
+{
+  "_comment": "Drop this mcpServers block into your agent's MCP config. Both env vars are optional — they default to the global brain paths when a project hasn't overridden them via its own .mcp.json. install.sh symlinks bin/mempalace-mcp into ~/.local/bin so it resolves on PATH.",
+  "mcpServers": {
+    "engram": {
+      "command": "engram",
+      "args": ["mcp"]
+    },
+    "mempalace": {
+      "command": "mempalace-mcp",
+      "args": [],
+      "env": {
+        "MEMPALACE_PALACE": "${MEMPALACE_PALACE:-$HOME/.mempalace/global}"
+      }
+    }
+  }
+}

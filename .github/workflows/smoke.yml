@@ -1,0 +1,50 @@
+name: smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  smoke-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Homebrew (Linux)
+        run: |
+          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" </dev/null
+          echo "/home/linuxbrew/.linuxbrew/bin" >> $GITHUB_PATH
+
+      - name: Install engram
+        run: |
+          brew tap gentleman-programming/tap
+          brew install engram
+          engram version
+
+      - name: Install mempalace
+        run: |
+          python -m pip install --upgrade pip
+          pip install mempalace
+          mempalace --help | head -5
+
+      - name: Run brain-status.sh
+        run: |
+          chmod +x scripts/brain-status.sh
+          bash scripts/brain-status.sh
+
+      - name: Validate install.sh syntax
+        run: bash -n install.sh
+
+      - name: Validate other scripts
+        run: |
+          for f in scripts/*.sh hooks/*.sh uninstall.sh; do
+            bash -n "$f" && echo "OK: $f"
+          done
