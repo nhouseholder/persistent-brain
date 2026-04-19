@@ -13,11 +13,12 @@ MEMPALACE_PALACE="${HOME}/.mempalace/${PROJECT_NAME}"
 PROJECT_COUNT=0; GLOBAL_COUNT=0; MEMPALACE_COUNT=0; LAST_SAVE="n/a"
 
 # Register session start via direct SQLite (engram has no session-start CLI)
+# CRITICAL: Use unique session ID per session — static IDs collapse all sessions into one
 if command -v sqlite3 >/dev/null 2>&1 && [ -f "$ENGRAM_DB" ]; then
-  SESSION_ID="hook-${PROJECT_NAME}"
+  SESSION_ID="hook-${PROJECT_NAME}-$(date +%s)-$$"
   sqlite3 "$ENGRAM_DB" \
-    "INSERT OR IGNORE INTO sessions (id, project, directory, started_at) VALUES ('$SESSION_ID', '$PROJECT_NAME', '$PROJECT', datetime('now'));" \
-    >/dev/null 2>&1 &
+    "INSERT INTO sessions (id, project, directory, started_at) VALUES ('$SESSION_ID', '$PROJECT_NAME', '$PROJECT', datetime('now'));" \
+    >/dev/null 2>&1
 fi
 
 if command -v engram >/dev/null 2>&1; then

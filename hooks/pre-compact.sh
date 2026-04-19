@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Claude Code PreCompact hook — timestamp marker so the daily log reflects when
-# context got compressed. Non-blocking, does not read transcripts.
+# Claude Code PreCompact hook — compress mempalace before context compaction.
+# Non-blocking, uses nohup to survive shell exit.
 set +e
 
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
@@ -12,7 +12,7 @@ PALACE="$MEMPALACE_PROJECT"
 [ -d "$PALACE" ] || PALACE="$MEMPALACE_GLOBAL"
 
 if command -v mempalace >/dev/null 2>&1 && [ -d "$PALACE" ]; then
-  mempalace --palace "$PALACE" compress >/dev/null 2>&1 &
+  nohup mempalace --palace "$PALACE" compress >/dev/null 2>&1 &
 fi
 
 exit 0
