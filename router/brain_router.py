@@ -380,21 +380,25 @@ def mempalace_search(query, limit=10):
 def mempalace_save(content, metadata=None):
     """Save verbatim content to mempalace for permanent recall (Fix #4).
     
-    Mempalace mines files from directories — we write content as a .md file
-    in the palace's raw/ staging area, then mine it into the vector index.
+    Mempalace is a bulk mining tool — it doesn't support single-item saves.
+    Instead, we write content to a transcripts/ directory within the palace.
+    The session-end hook mines this directory periodically.
+    
+    For immediate verbatim recall, the content is also stored in engram
+    with type='verbatim' so brain_query can find it right away.
     """
     palace = _resolve_palace()
     if not palace:
         return {"success": False, "error": "mempalace palace not found"}
     try:
-        # Write content as a timestamped .md file in palace/raw/
-        raw_dir = os.path.join(palace, "raw")
-        os.makedirs(raw_dir, exist_ok=True)
+        # Write to transcripts/ directory for periodic mining
+        transcript_dir = os.path.join(palace, "transcripts")
+        os.makedirs(transcript_dir, exist_ok=True)
         
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         safe_title = "".join(c if c.isalnum() else "_" for c in (metadata.get("title", "memory") if metadata else "memory"))[:50]
         filename = f"{timestamp}_{safe_title}.md"
-        filepath = os.path.join(raw_dir, filename)
+        filepath = os.path.join(transcript_dir, filename)
         
         with open(filepath, "w") as f:
             f.write(f"# {metadata.get('title', 'Memory')}\n\n")
@@ -404,17 +408,22 @@ def mempalace_save(content, metadata=None):
                 f.write(f"**Project:** {metadata.get('project', PROJECT_NAME)}\n\n")
             f.write(content)
         
-        # Mine the new file into the palace's vector index
-        result = subprocess.run(
-            ["mempalace", "--palace", palace, "mine", raw_dir],
-            capture_output=True, text=True, timeout=30)
+        # Also save to engram as verbatim type for immediate recall
+        engram_result = engram_save(
+            title=f"[verbatim] {metadata.get('title', 'Memory')}" if metadata else "[verbatim] Memory",
+            content=content,
+            type_tag="discovery",
+            project=metadata.get("project", PROJECT_NAME) if metadata else PROJECT_NAME,
+            topic_key=f"verbatim/{safe_title}" if metadata else None
+        )
         
         return {
             "success": True, 
             "source": "mempalace", 
             "palace": palace,
             "file": filepath,
-            "mine_output": result.stdout.strip() if result.returncode == 0 else None
+            "engram_backup": engram_result.get("success", False) if isinstance(engram_result, dict) else False,
+            "note": "Content saved to transcripts/ for periodic mining + engram for immediate recall"
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
