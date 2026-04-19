@@ -30,32 +30,38 @@ MEMPALACE_GLOBAL = os.path.expanduser("~/.mempalace/global")
 
 # ---------------------------------------------------------------------------
 # Store availability checks — explicit error reporting (Fix #6)
+# Cached to avoid subprocess overhead on every query
 # ---------------------------------------------------------------------------
 
-def _engram_available():
-    """Check if engram CLI is installed and accessible."""
-    try:
-        subprocess.run(["engram", "--version"], capture_output=True, timeout=5)
-        return True
-    except Exception:
-        return False
-
-def _mempalace_available():
-    """Check if mempalace CLI is installed and accessible."""
-    try:
-        subprocess.run(["mempalace", "--help"], capture_output=True, timeout=5)
-        return True
-    except Exception:
-        return False
+_store_cache = None
 
 def _store_status():
-    """Return availability status of both stores."""
-    return {
-        "engram_available": _engram_available(),
-        "mempalace_available": _mempalace_available(),
+    """Return availability status of both stores. Cached for 60s."""
+    global _store_cache
+    if _store_cache is not None:
+        return _store_cache
+    
+    status = {
+        "engram_available": False,
+        "mempalace_available": False,
         "engram_db_exists": os.path.isfile(ENGRAM_DB) or os.path.isfile(ENGRAM_GLOBAL_DB),
         "mempalace_palace_exists": os.path.isdir(MEMPALACE_PALACE) or os.path.isdir(MEMPALACE_GLOBAL),
     }
+    
+    try:
+        subprocess.run(["engram", "--version"], capture_output=True, timeout=3)
+        status["engram_available"] = True
+    except Exception:
+        pass
+    
+    try:
+        subprocess.run(["mempalace", "--help"], capture_output=True, timeout=3)
+        status["mempalace_available"] = True
+    except Exception:
+        pass
+    
+    _store_cache = status
+    return status
 
 # ---------------------------------------------------------------------------
 # SQLite helpers (engram direct access)
@@ -372,24 +378,44 @@ def mempalace_search(query, limit=10):
         return []
 
 def mempalace_save(content, metadata=None):
-    """Save verbatim content to mempalace for permanent recall (Fix #4)."""
+    """Save verbatim content to mempalace for permanent recall (Fix #4).
+    
+    Mempalace mines files from directories — we write content as a .md file
+    in the palace's raw/ staging area, then mine it into the vector index.
+    """
     palace = _resolve_palace()
     if not palace:
         return {"success": False, "error": "mempalace palace not found"}
     try:
-        # mempalace indexes files — write to a temp file and let mempalace pick it up
-        # Using mempalace's CLI to add content directly
+        # Write content as a timestamped .md file in palace/raw/
+        raw_dir = os.path.join(palace, "raw")
+        os.makedirs(raw_dir, exist_ok=True)
+        
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        safe_title = "".join(c if c.isalnum() else "_" for c in (metadata.get("title", "memory") if metadata else "memory"))[:50]
+        filename = f"{timestamp}_{safe_title}.md"
+        filepath = os.path.join(raw_dir, filename)
+        
+        with open(filepath, "w") as f:
+            f.write(f"# {metadata.get('title', 'Memory')}\n\n")
+            if metadata:
+                f.write(f"**Type:** {metadata.get('type', 'manual')}\n")
+                f.write(f"**Saved:** {datetime.now(timezone.utc).isoformat()}\n")
+                f.write(f"**Project:** {metadata.get('project', PROJECT_NAME)}\n\n")
+            f.write(content)
+        
+        # Mine the new file into the palace's vector index
         result = subprocess.run(
-            ["mempalace", "--palace", palace, "add", content],
-            capture_output=True, text=True, timeout=15,
-            input=content)
-        if result.returncode == 0:
-            return {"success": True, "source": "mempalace", "palace": palace}
-        # Fallback: mempalace may auto-index from stdin
-        result2 = subprocess.run(
-            ["mempalace", "--palace", palace, "index"],
-            capture_output=True, text=True, timeout=15)
-        return {"success": True, "source": "mempalace", "palace": palace, "note": "content indexed via mempalace"}
+            ["mempalace", "--palace", palace, "mine", raw_dir],
+            capture_output=True, text=True, timeout=30)
+        
+        return {
+            "success": True, 
+            "source": "mempalace", 
+            "palace": palace,
+            "file": filepath,
+            "mine_output": result.stdout.strip() if result.returncode == 0 else None
+        }
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -526,7 +552,14 @@ def handle_brain_save(p):
 
     # Fix #4: Optionally save verbatim to mempalace too
     if p.get("save_verbatim") and result.get("success"):
-        mp_result = mempalace_save(f"{p['title']}: {p['content']}")
+        mp_result = mempalace_save(
+            p["content"],
+            metadata={
+                "title": p["title"],
+                "type": p.get("type", "manual"),
+                "project": p.get("scope", "project")
+            }
+        )
         result["mempalace"] = mp_result
 
     return result
@@ -556,7 +589,7 @@ def handle_brain_context(p):
 def handle_brain_correct(p):
     # Fix #5: Search both stores
     existing = engram_search(p["search_query"], limit=3, project=PROJECT_NAME)
-    mempalace_results = mempalace_search(p["search_query"], limit=3) if _mempalace_available() else []
+    mempalace_results = mempalace_search(p["search_query"], limit=3) if _store_status()["mempalace_available"] else []
 
     if not existing and not mempalace_results:
         return {"success": False, "error": f"No memory found for '{p['search_query']}' in either store"}
@@ -586,7 +619,7 @@ def handle_brain_forget(p):
 
     # Fix #5: Delete from both stores
     existing = engram_search(p["search_query"], limit=1, project=PROJECT_NAME)
-    mempalace_results = mempalace_search(p["search_query"], limit=1) if _mempalace_available() else []
+    mempalace_results = mempalace_search(p["search_query"], limit=1) if _store_status()["mempalace_available"] else []
 
     engram_result = None
     if existing and not (isinstance(existing[0], dict) and "error" in existing[0]):
