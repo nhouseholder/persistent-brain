@@ -33,12 +33,64 @@ MEMPALACE_GLOBAL = os.path.expanduser("~/.mempalace/global")
 
 def _get_db(db_path=None):
     path = db_path or ENGRAM_DB
-    if not os.path.isfile(path):
+    # If project DB doesn't exist, we'll create it on connection
+    # but we need to know if we need to initialize the schema
+    needs_schema = not os.path.isfile(path)
+    
+    try:
+        conn = sqlite3.connect(path, timeout=5)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        
+        if needs_schema:
+            _init_schema(conn)
+            
+        return conn
+    except Exception:
         return None
-    conn = sqlite3.connect(path, timeout=5)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+
+def _init_schema(conn):
+    """Initialize a fresh engram database with the standard schema."""
+    conn.executescript("""
+        CREATE TABLE sessions (
+            id TEXT PRIMARY KEY,
+            project TEXT NOT NULL,
+            directory TEXT NOT NULL,
+            started_at TEXT NOT NULL DEFAULT (datetime('now')),
+            ended_at TEXT,
+            summary TEXT
+        );
+        CREATE TABLE observations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sync_id TEXT,
+            session_id TEXT NOT NULL,
+            type TEXT NOT NULL,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            tool_name TEXT,
+            project TEXT,
+            scope TEXT NOT NULL DEFAULT 'project',
+            topic_key TEXT,
+            normalized_hash TEXT,
+            revision_count INTEGER NOT NULL DEFAULT 1,
+            duplicate_count INTEGER NOT NULL DEFAULT 1,
+            last_seen_at TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            deleted_at TEXT,
+            access_count INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (session_id) REFERENCES sessions(id)
+        );
+        CREATE VIRTUAL TABLE observations_fts USING fts5(
+            title, content, tool_name, type, project, topic_key,
+            content='observations', content_rowid='id'
+        );
+        CREATE TRIGGER obs_fts_insert AFTER INSERT ON observations BEGIN
+            INSERT INTO observations_fts(rowid, title, content, tool_name, type, project, topic_key)
+            VALUES (new.id, new.title, new.content, new.tool_name, new.type, new.project, new.topic_key);
+        END;
+    """)
+    conn.commit()
 
 def _migrate(conn):
     """Add access_count column if missing."""
