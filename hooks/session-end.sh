@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SessionEnd hook — auto-distill via mempalace search + engram save, flush, sync.
+# SessionEnd hook — auto-distill via engram context + mempalace search, flush, sync.
 # CRITICAL: Steps that save data run synchronously to prevent data loss on shell exit.
 # Only compress/sync (non-critical) are backgrounded.
 set +e
@@ -11,14 +11,21 @@ ENGRAM_DB="${HOME}/.engram/${PROJECT_NAME}.db"
 MEMPALACE_PALACE="${HOME}/.mempalace/${PROJECT_NAME}"
 [ -d "$MEMPALACE_PALACE" ] || MEMPALACE_PALACE="${HOME}/.mempalace/global"
 
-# ---------- 1. Auto-distill: capture recent context as a session summary ----------
+# ---------- 1. Auto-distill: capture recent engram context as a session summary ----------
 # CRITICAL: Run synchronously — this is the safety net that catches unsaved facts
-if command -v mempalace >/dev/null 2>&1 && [ -d "$MEMPALACE_PALACE" ] && command -v engram >/dev/null 2>&1; then
-  # Search for most recent session content (not just project name)
-  CONTEXT=$(mempalace --palace "$MEMPALACE_PALACE" search "session summary key decisions" --results 5 2>/dev/null | head -c 16000)
+# Use engram context (most reliable) since mempalace only has mined files
+if command -v engram >/dev/null 2>&1; then
+  # Get recent context from engram
+  CONTEXT=$(ENGRAM_DB="$ENGRAM_DB" engram context "$PROJECT_NAME" 2>/dev/null | head -c 16000)
   if [ -z "$CONTEXT" ] || [ ${#CONTEXT} -le 50 ]; then
-    # Fallback: search by project name if session-specific search returns nothing
-    CONTEXT=$(mempalace --palace "$MEMPALACE_PALACE" search "$PROJECT_NAME" --results 3 2>/dev/null | head -c 16000)
+    # Fallback: search engram for recent discoveries
+    CONTEXT=$(ENGRAM_DB="$ENGRAM_DB" engram search "session" --project "$PROJECT_NAME" --limit 5 2>/dev/null | head -c 16000)
+  fi
+  if [ -z "$CONTEXT" ] || [ ${#CONTEXT} -le 50 ]; then
+    # Second fallback: search mempalace for any project content
+    if command -v mempalace >/dev/null 2>&1 && [ -d "$MEMPALACE_PALACE" ]; then
+      CONTEXT=$(mempalace --palace "$MEMPALACE_PALACE" search "$PROJECT_NAME" --results 3 2>/dev/null | head -c 16000)
+    fi
   fi
   if [ -n "$CONTEXT" ] && [ ${#CONTEXT} -gt 50 ]; then
     engram save \
