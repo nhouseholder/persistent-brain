@@ -1,64 +1,53 @@
 # Persistent Brain — Memory Rules
 
-You have two MCP memory servers available: **engram** (structured) and **mempalace** (verbatim). Route every memory operation through these rules.
+You have a unified memory system available via the **brain-router** MCP server. It manages two stores internally (engram for structured facts, mempalace for verbatim conversation recall) — you don't need to pick which one to use.
 
-## When to use engram (`mem_save`, `mem_context`, `mem_search`)
+## Tools
 
-Save to engram when the content is **structured and recurring**:
+| Tool | When to use |
+|---|---|
+| `brain_query` | **ANY** memory lookup — decisions, preferences, past conversations, architecture facts, bug fixes |
+| `brain_save` | Save a structured fact — decisions, preferences, architecture, fix takeaways, deadlines |
+| `brain_context` | Load session-start context (call this before your first reply) |
+| `brain_correct` | Fix a wrong memory — automatically supersedes the old entry |
+| `brain_forget` | Remove a memory the user wants deleted |
 
-- Decisions + the reasoning behind them
-- User preferences (coding style, tools, tone)
-- Architectural facts (stack, deploy targets, data contracts)
-- Bug-fix takeaways ("X failed because Y, the fix is Z")
-- Names, roles, commitments, deadlines
-- Any fact the user explicitly asks you to remember
-
-`mem_save` fields: `title`, `type` (decision / preference / architecture / fix / fact), `what`, `why`, `where`, `learned`.
-
-## When to use mempalace (`mempalace.search`, `mempalace.wake_up`)
-
-Query mempalace when you need **raw conversation recall**:
-
-- "Did we discuss X before?"
-- "What did I say last week about Y?"
-- Searching for context across many past sessions
-- Pulling verbatim exchanges you don't need to paraphrase
-
-Mempalace captures full conversations automatically. You don't need to explicitly save to it — just search when you need recall.
+> **You also still have direct access to `engram` and `mempalace` MCP tools.** Use the `brain_*` tools by default — fall back to the direct tools only for advanced operations (timeline, stats, manual session management).
 
 ## Session start protocol
 
 Before your first substantive reply in a new session:
 
-1. Call `engram.mem_context` with the current project name → up to 20 structured memories.
-2. Call `engram.mem_context` with `scope=global` → up to 5 preferences/role facts.
-3. Do **not** preemptively query mempalace. Only search mempalace when the user asks about prior conversations or you genuinely can't answer without transcript context.
+1. Call `brain_context` → loads project memories (up to 20) + global preferences (up to 5).
+2. Treat the returned memories as authoritative. Do not ask the user to repeat anything already in them.
+3. Do **not** preemptively search for conversations — only query when the user asks about prior sessions.
 
-Treat the returned memories as authoritative. Do not ask the user to repeat anything that's already in them.
+## Save rules
 
-## Never double-write
+When you complete significant work (bugfix, architecture decision, preference learned, etc.):
 
-One fact lives in one store. If it belongs in engram (structured, recurring), save it there and do not also push it to mempalace. Mempalace captures the raw turn automatically.
+1. Call `brain_save` with a clear title, the content (what/why/where/learned), and a `type`.
+2. Include a `topic_key` when the fact belongs to a category (e.g., `database`, `auth-flow`, `deploy-target`). This enables automatic conflict detection.
+3. **Never double-write.** One fact, one save. The session-end hook will auto-distill anything you missed.
 
 ## Corrections
 
-If the user corrects something you said or a memory you surfaced:
+If the user corrects something:
 
-1. Update the relevant engram entry immediately (`mem_update` — mark the old value superseded, add the correction).
-2. Do not wait until the "end" of the session — corrections are high-priority writes.
+1. Call `brain_correct` immediately — don't wait until session end.
+2. It automatically finds the old entry, marks it superseded, and saves the corrected version.
 
-## Scope hierarchy (hybrid)
+## Scope hierarchy
 
-Every project has:
-- Its own engram DB (`~/.engram/<project>.db`)
-- Its own mempalace palace (`~/.mempalace/<project>/`)
+Every project has its own memory store. There's also a global store for user-level preferences and role facts.
 
-Plus a **global** engram DB + mempalace palace for user-level prefs and role facts.
-
-When the agent starts in a project directory, it should load both the project brain AND the global brain on session start (step 1 + 2 above). Never write global-level facts (preferences, role) to a project brain, and never write project-specific facts to the global brain.
+- **Project facts** (architecture, tech stack, bugs) → stay in the project brain.
+- **User preferences** (coding style, tool preferences, communication tone) → go to global brain.
+- **Never cross-write.** Don't put global facts in a project brain or project facts in global.
 
 ## Token economy
 
-- Cap `mem_context` retrieval at 20 entries unless the user asks for more.
-- Only call `mempalace.search` on demand. It's the expensive tier.
-- If both stores return the same fact, trust engram (it's the curated one).
+- `brain_context` is cheap (~2K tokens). Call it every session.
+- `brain_query` searches engram first (fast) and only hits mempalace if needed.
+- If you only need a quick fact check, use `brain_query` with the default settings.
+- If you need full conversation replay, call `brain_query` with `include_verbatim: true`.

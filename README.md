@@ -6,12 +6,13 @@ A portable, local-first, hybrid memory system for AI coding agents. Works across
 
 **The problem.** Every session, your agent forgets. Swap tools (Claude → Qwen) and you lose even more. Claude-only memory systems (e.g., Claude plugins, Supermemory) die the moment you change frontends.
 
-**The fix.** Two MCP servers running side-by-side:
+**The fix.** A unified brain-router that sits on top of two specialized stores:
 
 - **[engram](https://github.com/Gentleman-Programming/engram)** — structured decisions, preferences, fixes (SQLite + FTS5, one tiny Go binary, git-syncable).
 - **[MemPalace](https://github.com/MemPalace/mempalace)** — verbatim conversation recall (ChromaDB, 96.6% R@5 on LongMemEval, zero API calls).
+- **brain-router** — unified MCP server that auto-routes queries across both stores, detects conflicts, and exposes 5 high-level tools.
 
-Neither tool is agent-specific. Any MCP client sees both stores with the same data.
+Neither tool is agent-specific. Any MCP client sees the same brain with the same data.
 
 ---
 
@@ -20,25 +21,54 @@ Neither tool is agent-specific. Any MCP client sees both stores with the same da
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  Agent (Claude Code / Codex / Qwen / Kimi K2 / Cursor / …)  │
-└────────────┬────────────────────────────────┬───────────────┘
-             │ MCP stdio                      │ MCP stdio
-     ┌───────▼────────┐              ┌────────▼─────────┐
-     │  engram        │              │  mempalace       │
-     │  (structured)  │              │  (verbatim)      │
-     └───────┬────────┘              └────────┬─────────┘
-             │                                │
-     ┌───────▼────────┐              ┌────────▼─────────┐
-     │ SQLite + FTS5  │              │ ChromaDB vector  │
-     │ ~/.engram/     │              │ ~/.mempalace/    │
-     └────────────────┘              └──────────────────┘
+└────────────────────────┬────────────────────────────────────┘
+                         │ MCP stdio
+                 ┌───────▼────────┐
+                 │  brain-router  │  ← unified query/save interface
+                 │  (Python, 0    │
+                 │   dependencies)│
+                 └──┬──────────┬──┘
+                    │          │
+            ┌───────▼────┐ ┌──▼──────────┐
+            │  engram    │ │ mempalace   │
+            │ (struct.)  │ │ (verbatim)  │
+            └──────┬─────┘ └──────┬──────┘
+            ┌──────▼─────┐ ┌──────▼──────┐
+            │ SQLite+FTS5│ │ ChromaDB    │
+            │ ~/.engram/ │ │ ~/.mempalace│
+            └────────────┘ └─────────────┘
 ```
 
-**Hybrid scope:** one global brain (prefs / role / cross-project facts) + one brain per project. Inside a project, the agent reads both.
+**The agent calls `brain_query` for everything.** The router decides which store to hit:
+1. Search engram first (fast, structured, <50ms)
+2. Fall back to mempalace only when engram has no answer or verbatim recall is requested
 
-**Routing:**
-- Decisions, preferences, architecture, fix takeaways → `engram.mem_save` (hot, structured)
-- "What did we discuss about X last week?" → `mempalace.search` (cold, verbatim)
-- Session start → agent pulls `mem_context` from engram (project + global) before first reply
+**No more routing errors.** The LLM doesn't have to guess which store has the answer.
+
+### Tools
+
+| Tool | Purpose |
+|---|---|
+| `brain_query` | Search all memories (auto-routes to the right store) |
+| `brain_save` | Save a structured fact with conflict detection |
+| `brain_context` | Load session-start context (project + global) |
+| `brain_correct` | Fix a wrong memory (auto-supersedes old entry) |
+| `brain_forget` | Delete a memory across both stores |
+
+### Session Lifecycle
+
+```
+session-start.sh          session-end.sh
+      │                         │
+      ▼                         ▼
+  engram.session-start     1. mempalace.latest → engram.capture-passive
+  brain_context               (auto-distill up to 5 key facts)
+  (load memories)          2. engram.session-end
+                           3. mempalace.compress
+                           4. engram.sync
+```
+
+**Session-end auto-distillation** catches anything the agent forgot to save. No more lost facts from crashed or rushed sessions.
 
 ---
 
@@ -50,7 +80,7 @@ cd ~/persistent-brain
 ./install.sh
 ```
 
-Installs `engram` (via Homebrew tap) and `mempalace` (via pipx), writes MCP config snippets for every supported agent, installs a session-start hook, and initialises your global brain.
+Installs `engram` (Homebrew tap), `mempalace` (pipx), `brain-router` (zero-dep Python), hooks (session-start + session-end + pre-compact), and initialises your global brain.
 
 Then, per project:
 
@@ -58,7 +88,15 @@ Then, per project:
 ./scripts/brain-init.sh ~/ProjectsHQ/my-app
 ```
 
-Creates a project-scoped engram DB + mempalace palace, and drops a `.mcp.json` + `AGENTS.md` into the project so the agent auto-loads the right brain.
+Creates a project-scoped engram DB + mempalace palace, and drops a `.mcp.json` + `AGENTS.md` into the project so the agent auto-loads brain-router with the right scope.
+
+### Inspect what the agent knows
+
+```bash
+./scripts/brain-inspect.sh my-app
+```
+
+Shows session context, memory type distribution, recent saves, mempalace status, disk usage, and a map of all project brains.
 
 ---
 
@@ -80,7 +118,7 @@ Any MCP-capable client works. If yours isn't listed, drop the block from [config
 
 ## Routing rules
 
-The glue between the two stores is a short, agent-agnostic ruleset in [config/AGENTS.md](config/AGENTS.md). `install.sh` drops it into the right file for each agent (`CLAUDE.md`, `AGENTS.md`, Cursor rules, etc.). Full explanation: [docs/routing-rules.md](docs/routing-rules.md).
+The brain-router handles routing automatically. Full explanation: [docs/routing-rules.md](docs/routing-rules.md). Agent instructions: [config/AGENTS.md](config/AGENTS.md).
 
 ## Sync across machines
 
@@ -90,19 +128,21 @@ The glue between the two stores is a short, agent-agnostic ruleset in [config/AG
 ## Status + troubleshooting
 
 ```bash
-./scripts/brain-status.sh    # health check both stores
+./scripts/brain-status.sh     # health check both stores
+./scripts/brain-inspect.sh    # see what the agent knows
 ```
 
 Common issues: [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ---
 
-## Non-goals
+## Design Principles
 
-- No custom MCP bridge server (both stores stay independent).
-- No team-shared brains (different problem; use Supermemory if that's what you need).
-- No Windows native support (WSL only for now).
-- No Obsidian / knowledge-graph export (use [graphify](https://github.com/safishamsi/graphify) separately if you want that).
+1. **One query, both stores.** The agent never picks the wrong store — the router handles dispatch.
+2. **Auto-distill on session end.** Every session's key facts are automatically extracted — no manual `mem_save` required.
+3. **Conflict detection on write.** Contradictions are caught when saving, not discovered during retrieval.
+4. **Zero external dependencies.** The router is pure Python 3.10+ stdlib. No pip install, no venv.
+5. **Agent-agnostic.** MCP is the only interface. Any client that speaks MCP gets the full brain.
 
 ## License
 

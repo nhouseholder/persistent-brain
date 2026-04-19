@@ -59,11 +59,15 @@ else
   ok "mempalace installed"
 fi
 
-# ---------- 5. Symlink the mempalace-mcp wrapper into PATH ----------
+# ---------- 5. Symlink wrappers into PATH ----------
 mkdir -p "$HOME/.local/bin"
 ln -sf "$REPO_DIR/bin/mempalace-mcp" "$HOME/.local/bin/mempalace-mcp"
 chmod +x "$REPO_DIR/bin/mempalace-mcp"
 ok "mempalace-mcp wrapper linked to $HOME/.local/bin/mempalace-mcp"
+
+ln -sf "$REPO_DIR/bin/brain-router" "$HOME/.local/bin/brain-router"
+chmod +x "$REPO_DIR/bin/brain-router"
+ok "brain-router wrapper linked to $HOME/.local/bin/brain-router"
 
 # ---------- 6. Init global brains ----------
 mkdir -p "$(dirname "$GLOBAL_ENGRAM_DB")"
@@ -113,15 +117,23 @@ wire_codex() {
 wire_claude_code
 wire_codex
 
-# ---------- 8. Session-start hook (Claude Code) ----------
-HOOK_SRC="$REPO_DIR/hooks/session-start.sh"
-HOOK_DEST="${HOME}/.claude/hooks/persistent-brain-session-start.sh"
-if [ -f "$HOOK_SRC" ] && [ -d "${HOME}/.claude/hooks" ]; then
-  cp "$HOOK_SRC" "$HOOK_DEST"
-  chmod +x "$HOOK_DEST"
-  ok "Installed session-start hook at $HOOK_DEST"
-  warn "Register it in ~/.claude/settings.json under \"hooks\" → \"SessionStart\" (see examples/claude-code-setup.md)"
-fi
+# ---------- 8. Hooks (Claude Code) ----------
+HOOKS_DIR="${HOME}/.claude/hooks"
+mkdir -p "$HOOKS_DIR" 2>/dev/null || true
+
+for hook_file in session-start.sh session-end.sh pre-compact.sh; do
+  HOOK_SRC="$REPO_DIR/hooks/$hook_file"
+  HOOK_DEST="$HOOKS_DIR/persistent-brain-$hook_file"
+  if [ -f "$HOOK_SRC" ]; then
+    cp "$HOOK_SRC" "$HOOK_DEST"
+    chmod +x "$HOOK_DEST"
+    ok "Installed hook: $HOOK_DEST"
+  fi
+done
+warn "Register hooks in ~/.claude/settings.json (see examples/claude-code-setup.md):"  
+echo "   SessionStart → persistent-brain-session-start.sh"
+echo "   SessionEnd   → persistent-brain-session-end.sh"
+echo "   PreCompact   → persistent-brain-pre-compact.sh"
 
 # ---------- 9. Agent-agnostic rules ----------
 info "Copy config/AGENTS.md into your agent's instruction file:"
@@ -138,3 +150,4 @@ echo "Next steps:"
 echo "  1. Wire MCP config for each agent you use (see examples/)"
 echo "  2. For each project:  ./scripts/brain-init.sh <project-path>"
 echo "  3. Verify with:       ./scripts/brain-status.sh"
+echo "  4. Inspect memories:  ./scripts/brain-inspect.sh <project-name>"

@@ -1,6 +1,14 @@
 {
-  "_comment": "Drop this mcpServers block into your agent's MCP config. Both env vars are optional — they default to the global brain paths when a project hasn't overridden them via its own .mcp.json. install.sh symlinks bin/mempalace-mcp into ~/.local/bin so it resolves on PATH.",
+  "_comment": "Drop this mcpServers block into your agent's MCP config. brain-router is the unified interface — it routes queries to engram and mempalace automatically. The direct engram/mempalace servers are kept for advanced operations.",
   "mcpServers": {
+    "brain-router": {
+      "command": "brain-router",
+      "env": {
+        "BRAIN_PROJECT": "${BRAIN_PROJECT:-global}",
+        "ENGRAM_DB": "${ENGRAM_DB:-$HOME/.engram/engram.db}",
+        "MEMPALACE_PALACE": "${MEMPALACE_PALACE:-$HOME/.mempalace/global}"
+      }
+    },
     "engram": {
       "command": "engram",
       "args": ["mcp"]

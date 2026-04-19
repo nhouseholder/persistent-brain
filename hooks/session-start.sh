@@ -1,46 +1,45 @@
 #!/usr/bin/env bash
-# Claude Code SessionStart hook — emits a brain summary to stdout (injected into the agent's context).
-# Non-blocking: fails silent so a missing binary never blocks a session.
+# SessionStart hook — register session + emit brain summary to agent context.
 set +e
-
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
 
 PROJECT="${CLAUDE_PROJECT_DIR:-${PWD}}"
 PROJECT_NAME="$(basename "$PROJECT")"
-ENGRAM_PROJECT_DB="${HOME}/.engram/${PROJECT_NAME}.db"
-ENGRAM_GLOBAL_DB="${HOME}/.engram/engram.db"
-MEMPALACE_PROJECT="${HOME}/.mempalace/${PROJECT_NAME}"
-MEMPALACE_GLOBAL="${HOME}/.mempalace/global"
+ENGRAM_DB="${HOME}/.engram/${PROJECT_NAME}.db"
+[ -f "$ENGRAM_DB" ] || ENGRAM_DB="${HOME}/.engram/engram.db"
+MEMPALACE_PALACE="${HOME}/.mempalace/${PROJECT_NAME}"
+[ -d "$MEMPALACE_PALACE" ] || MEMPALACE_PALACE="${HOME}/.mempalace/global"
 
-PROJECT_COUNT=0
-GLOBAL_COUNT=0
-MEMPALACE_COUNT=0
-LAST_SAVE="n/a"
+PROJECT_COUNT=0; GLOBAL_COUNT=0; MEMPALACE_COUNT=0; LAST_SAVE="n/a"
+
+# Register session start via direct SQLite (engram has no session-start CLI)
+if command -v sqlite3 >/dev/null 2>&1 && [ -f "$ENGRAM_DB" ]; then
+  SESSION_ID="hook-${PROJECT_NAME}"
+  sqlite3 "$ENGRAM_DB" \
+    "INSERT OR IGNORE INTO sessions (id, project, directory, started_at) VALUES ('$SESSION_ID', '$PROJECT_NAME', '$PROJECT', datetime('now'));" \
+    >/dev/null 2>&1 &
+fi
 
 if command -v engram >/dev/null 2>&1; then
-  if [ -f "$ENGRAM_PROJECT_DB" ]; then
-    PROJECT_COUNT=$(ENGRAM_DB="$ENGRAM_PROJECT_DB" engram stats 2>/dev/null | awk '/observations/ {print $NF; exit}' | tr -d ',')
+  if [ -f "${HOME}/.engram/${PROJECT_NAME}.db" ]; then
+    PROJECT_COUNT=$(ENGRAM_DB="${HOME}/.engram/${PROJECT_NAME}.db" engram stats 2>/dev/null | awk '/Observations/ {print $NF; exit}' | tr -d ',')
   fi
-  if [ -f "$ENGRAM_GLOBAL_DB" ]; then
-    GLOBAL_COUNT=$(ENGRAM_DB="$ENGRAM_GLOBAL_DB" engram stats 2>/dev/null | awk '/observations/ {print $NF; exit}' | tr -d ',')
-    LAST_SAVE=$(ENGRAM_DB="$ENGRAM_GLOBAL_DB" engram stats 2>/dev/null | awk '/last/ {print $NF; exit}')
+  GLOBAL_DB="${HOME}/.engram/engram.db"
+  if [ -f "$GLOBAL_DB" ]; then
+    GLOBAL_COUNT=$(ENGRAM_DB="$GLOBAL_DB" engram stats 2>/dev/null | awk '/Observations/ {print $NF; exit}' | tr -d ',')
   fi
 fi
 
-if command -v mempalace >/dev/null 2>&1; then
-  PALACE="$MEMPALACE_PROJECT"
-  [ -d "$PALACE" ] || PALACE="$MEMPALACE_GLOBAL"
-  if [ -d "$PALACE" ]; then
-    MEMPALACE_COUNT=$(mempalace --palace "$PALACE" status 2>/dev/null | awk '/sessions|drawers/ {print $NF; exit}' | tr -d ',')
-  fi
+if command -v mempalace >/dev/null 2>&1 && [ -d "$MEMPALACE_PALACE" ]; then
+  MEMPALACE_COUNT=$(mempalace --palace "$MEMPALACE_PALACE" status 2>/dev/null | awk '/drawer|session|file/ {sum+=$NF} END {print sum}' | tr -d ',')
 fi
 
 cat <<EOF
 [persistent-brain]
   project:   ${PROJECT_NAME}
-  engram:    ${PROJECT_COUNT:-0} project memories · ${GLOBAL_COUNT:-0} global · last save ${LAST_SAVE:-n/a}
-  mempalace: ${MEMPALACE_COUNT:-0} sessions indexed — call mempalace.search when you need prior-conversation recall
-  rules:     save structured facts to engram.mem_save · never double-write · corrections update immediately
+  engram:    ${PROJECT_COUNT:-0} project memories · ${GLOBAL_COUNT:-0} global
+  mempalace: ${MEMPALACE_COUNT:-0} items indexed
+  router:    use brain_query for all lookups · brain_save for facts · brain_context on session start
 EOF
 
 exit 0

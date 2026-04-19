@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # brain-init.sh <project-path> — create a per-project engram DB + mempalace palace,
 # and drop .mcp.json + AGENTS.md into the project so any agent auto-wires correctly.
+# Now includes the unified brain-router alongside the direct stores.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -19,6 +20,7 @@ PROJECT_NAME="$(basename "$PROJECT_PATH")"
 
 ENGRAM_DB="${HOME}/.engram/${PROJECT_NAME}.db"
 MEMPALACE_DIR="${HOME}/.mempalace/${PROJECT_NAME}"
+BRAIN_ROUTER="${REPO_DIR}/bin/brain-router"
 
 command -v engram    >/dev/null 2>&1 || die "engram not installed — run ./install.sh first"
 command -v mempalace >/dev/null 2>&1 || die "mempalace not installed — run ./install.sh first"
@@ -38,14 +40,22 @@ if [ ! -f "$MEMPALACE_DIR/mempalace.yaml" ]; then
 fi
 ok "mempalace palace: $MEMPALACE_DIR"
 
-# Write project .mcp.json — pointed at the project brain via env
+# Write project .mcp.json — brain-router (primary) + direct stores (fallback)
 MCP_JSON="${PROJECT_PATH}/.mcp.json"
-if [ -f "$MCP_JSON" ] && grep -q engram "$MCP_JSON" 2>/dev/null; then
-  info "$MCP_JSON already wired — leaving alone"
+if [ -f "$MCP_JSON" ] && grep -q brain-router "$MCP_JSON" 2>/dev/null; then
+  info "$MCP_JSON already wired with brain-router — leaving alone"
 else
   cat > "$MCP_JSON" <<EOF
 {
   "mcpServers": {
+    "brain-router": {
+      "command": "${BRAIN_ROUTER}",
+      "env": {
+        "BRAIN_PROJECT": "${PROJECT_NAME}",
+        "ENGRAM_DB": "${ENGRAM_DB}",
+        "MEMPALACE_PALACE": "${MEMPALACE_DIR}"
+      }
+    },
     "engram": {
       "command": "engram",
       "args": ["mcp"],
@@ -58,10 +68,10 @@ else
   }
 }
 EOF
-  ok "wrote $MCP_JSON"
+  ok "wrote $MCP_JSON (brain-router + engram + mempalace)"
 fi
 
-# Write project AGENTS.md — project-scoped addendum to the global routing rules
+# Write project AGENTS.md
 AGENTS_MD="${PROJECT_PATH}/AGENTS.md"
 if [ ! -f "$AGENTS_MD" ]; then
   cat > "$AGENTS_MD" <<EOF
@@ -69,19 +79,29 @@ if [ ! -f "$AGENTS_MD" ]; then
 
 ## Memory
 
-Two MCP servers are wired for this project via \`.mcp.json\`:
+Three MCP servers are wired for this project via \`.mcp.json\`:
 
-- **engram** — project DB: \`${ENGRAM_DB}\`
-- **mempalace** — project palace: \`${MEMPALACE_DIR}\`
+- **brain-router** — unified query/save interface (use this by default)
+- **engram** — direct access to structured facts: \`${ENGRAM_DB}\`
+- **mempalace** — direct access to conversation recall: \`${MEMPALACE_DIR}\`
 
-Follow the routing rules in the global persistent-brain config:
-https://github.com/nhouseholder/persistent-brain/blob/main/config/AGENTS.md
+### Quick reference
 
-Key rules:
-1. Save structured facts (decisions, preferences, architecture, fixes) to \`engram.mem_save\`.
-2. Search prior conversations with \`mempalace.search\`.
-3. On session start, call \`engram.mem_context\` for project + global brain.
-4. Never double-write. Corrections update engram immediately.
+| Action | Tool |
+|---|---|
+| Search memories | \`brain_query\` |
+| Save a fact | \`brain_save\` |
+| Load session context | \`brain_context\` |
+| Fix a wrong memory | \`brain_correct\` |
+| Delete a memory | \`brain_forget\` |
+
+### Session start protocol
+1. Call \`brain_context\` before your first reply.
+2. Treat returned memories as authoritative — don't re-ask.
+3. Save structured facts with \`brain_save\` as you work.
+4. Session-end hook auto-distills anything you missed.
+
+Full rules: https://github.com/nhouseholder/persistent-brain/blob/main/config/AGENTS.md
 EOF
   ok "wrote $AGENTS_MD"
 else
@@ -90,4 +110,5 @@ fi
 
 echo
 ok "Project '${PROJECT_NAME}' brain initialised."
-echo "  Launch your agent from ${PROJECT_PATH} and both MCP servers will auto-load."
+echo "  Launch your agent from ${PROJECT_PATH} and brain-router will auto-load."
+echo "  Inspect with: ./scripts/brain-inspect.sh ${PROJECT_NAME}"

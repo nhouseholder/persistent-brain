@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# brain-router — start the unified brain-router MCP server
+# Resolves python correctly and passes env through.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROUTER_PY="${SCRIPT_DIR}/../router/brain_router.py"
+
+[ -f "$ROUTER_PY" ] || { echo "brain-router: can't find $ROUTER_PY" >&2; exit 127; }
+
+# Use system python3 (no special venv needed — zero deps)
+exec python3 "$ROUTER_PY" "$@"
