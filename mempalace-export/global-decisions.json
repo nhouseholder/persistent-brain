@@ -1,0 +1,14 @@
+[
+  {
+    "drawer_id": "drawer_global_decisions_dbca58facc3f57fc79ebf712",
+    "content": "# Delegation rule: @generalist for multi-file implementation\n\n**Type:** decision\n**Saved:** 2026-04-21T08:32:59+00:00\n**Project:** 10-agent-team\n\n**What**: When creating 5+ files with clear scope/spec, ALWAYS delegate to @generalist. Never do it yourself.\n**Why**: Orchestrator rationalized doing 32 files directly citing \"tight coupling\" \u2014 wrong. Generalist handles multi-file implementation from spec.\n**Where**: Routing decision tree \u2014 medium tasks (2-10 files) and large tasks (10+ files split into batches)\n**Learned**: \"Tight coupling\" is NOT a valid excuse to skip delegation. Write spec first, then dispatch @generalist with the spec. Split large file sets into parallel batches.",
+    "wing": "global",
+    "room": "decisions",
+    "metadata": {
+      "wing": "global",
+      "added_by": "mcp",
+      "room": "decisions",
+      "filed_at": "2026-04-21T01:53:40.095691"
+    }
+  }
+]

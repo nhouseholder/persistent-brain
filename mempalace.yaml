@@ -1,0 +1,5 @@
+wing: persistent_brain
+rooms:
+- name: general
+  description: All project files
+  keywords: []
