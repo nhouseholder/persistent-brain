@@ -3,7 +3,13 @@
 # Resolves python correctly and passes env through.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 ROUTER_PY="${SCRIPT_DIR}/../router/brain_router.py"
 
 [ -f "$ROUTER_PY" ] || { echo "brain-router: can't find $ROUTER_PY" >&2; exit 127; }
