@@ -2,9 +2,9 @@
 """
 brain-router — Unified MCP bridge for persistent-brain.
 
-Uses direct SQLite access for engram (no CLI subprocess) and correct
-mempalace CLI flags. Includes memory scoring, conflict detection,
-and explicit error reporting when stores are unavailable.
+Uses direct SQLite access for engram (no CLI subprocess).
+Includes memory scoring, conflict detection, and explicit error
+reporting when stores are unavailable.
 
 Tools: brain_query, brain_save, brain_context, brain_correct, brain_forget
 """
@@ -25,8 +25,7 @@ from datetime import datetime, timezone
 PROJECT_NAME = os.environ.get("BRAIN_PROJECT", os.path.basename(os.getcwd()))
 ENGRAM_DB = os.environ.get("ENGRAM_DB", os.path.expanduser(f"~/.engram/{PROJECT_NAME}.db"))
 ENGRAM_GLOBAL_DB = os.path.expanduser("~/.engram/engram.db")
-MEMPALACE_PALACE = os.environ.get("MEMPALACE_PALACE", os.path.expanduser(f"~/.mempalace/{PROJECT_NAME}"))
-MEMPALACE_GLOBAL = os.path.expanduser("~/.mempalace/global")
+
 
 # ---------------------------------------------------------------------------
 # Store availability checks — explicit error reporting (Fix #6)
@@ -36,27 +35,19 @@ MEMPALACE_GLOBAL = os.path.expanduser("~/.mempalace/global")
 _store_cache = None
 
 def _store_status():
-    """Return availability status of both stores. Cached for 60s."""
+    """Return availability status of engram store. Cached for 60s."""
     global _store_cache
     if _store_cache is not None:
         return _store_cache
     
     status = {
         "engram_available": False,
-        "mempalace_available": False,
         "engram_db_exists": os.path.isfile(ENGRAM_DB) or os.path.isfile(ENGRAM_GLOBAL_DB),
-        "mempalace_palace_exists": os.path.isdir(MEMPALACE_PALACE) or os.path.isdir(MEMPALACE_GLOBAL),
     }
     
     try:
         subprocess.run(["engram", "--version"], capture_output=True, timeout=3)
         status["engram_available"] = True
-    except Exception:
-        pass
-    
-    try:
-        subprocess.run(["mempalace", "--help"], capture_output=True, timeout=3)
-        status["mempalace_available"] = True
     except Exception:
         pass
     
@@ -351,99 +342,7 @@ def engram_delete(obs_id):
     finally:
         conn.close()
 
-# ---------------------------------------------------------------------------
-# MemPalace operations (subprocess with correct flags)
-# ---------------------------------------------------------------------------
 
-def _resolve_palace():
-    """Resolve which mempalace palace to use."""
-    if os.path.isdir(MEMPALACE_PALACE):
-        return MEMPALACE_PALACE
-    if os.path.isdir(MEMPALACE_GLOBAL):
-        return MEMPALACE_GLOBAL
-    return None
-
-def mempalace_search(query, limit=10):
-    palace = _resolve_palace()
-    if not palace:
-        return []
-    try:
-        result = subprocess.run(
-            ["mempalace", "--palace", palace, "search", query, "--results", str(limit)],
-            capture_output=True, text=True, timeout=15)
-        if result.returncode != 0 or not result.stdout.strip():
-            return []
-        return [{"source": "mempalace", "content": result.stdout.strip(), "query": query}]
-    except Exception:
-        return []
-
-def mempalace_save(content, metadata=None):
-    """Save verbatim content to mempalace for permanent recall (Fix #4).
-    
-    Mempalace is a bulk mining tool — it doesn't support single-item saves.
-    Instead, we write content to a transcripts/ directory within the palace.
-    The session-end hook mines this directory periodically.
-    
-    For immediate verbatim recall, the content is also stored in engram
-    with type='verbatim' so brain_query can find it right away.
-    """
-    palace = _resolve_palace()
-    if not palace:
-        return {"success": False, "error": "mempalace palace not found"}
-    try:
-        # Write to transcripts/ directory for periodic mining
-        transcript_dir = os.path.join(palace, "transcripts")
-        os.makedirs(transcript_dir, exist_ok=True)
-        
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        safe_title = "".join(c if c.isalnum() else "_" for c in (metadata.get("title", "memory") if metadata else "memory"))[:50]
-        filename = f"{timestamp}_{safe_title}.md"
-        filepath = os.path.join(transcript_dir, filename)
-        
-        with open(filepath, "w") as f:
-            f.write(f"# {metadata.get('title', 'Memory')}\n\n")
-            if metadata:
-                f.write(f"**Type:** {metadata.get('type', 'manual')}\n")
-                f.write(f"**Saved:** {datetime.now(timezone.utc).isoformat()}\n")
-                f.write(f"**Project:** {metadata.get('project', PROJECT_NAME)}\n\n")
-            f.write(content)
-        
-        # Also save to engram as verbatim type for immediate recall
-        engram_result = engram_save(
-            title=f"[verbatim] {metadata.get('title', 'Memory')}" if metadata else "[verbatim] Memory",
-            content=content,
-            type_tag="discovery",
-            project=metadata.get("project", PROJECT_NAME) if metadata else PROJECT_NAME,
-            topic_key=f"verbatim/{safe_title}" if metadata else None
-        )
-        
-        return {
-            "success": True, 
-            "source": "mempalace", 
-            "palace": palace,
-            "file": filepath,
-            "engram_backup": engram_result.get("success", False) if isinstance(engram_result, dict) else False,
-            "note": "Content saved to transcripts/ for periodic mining + engram for immediate recall"
-        }
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-def mempalace_delete(query):
-    """Delete mempalace content matching a query (Fix #5)."""
-    palace = _resolve_palace()
-    if not palace:
-        return {"success": False, "error": "mempalace palace not found"}
-    try:
-        # Search first to find what matches
-        results = mempalace_search(query, limit=5)
-        if not results:
-            return {"success": False, "error": f"No mempalace content found for '{query}'"}
-        # mempalace doesn't have a direct delete CLI, so we mark by re-indexing without the content
-        # For now, return the matches so the agent knows what was found
-        return {"success": True, "deleted_query": query, "matches_found": len(results),
-                "note": "mempalace content identified for deletion — remove matching files from palace directory"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
 
 # ---------------------------------------------------------------------------
 # Tool handlers
@@ -451,19 +350,18 @@ def mempalace_delete(query):
 
 TOOLS = {
     "brain_query": {
-        "description": "Search all memory — structured facts AND verbatim conversation history. Auto-routes to the right store. Use for ANY memory lookup.",
+        "description": "Search all memory. Auto-routes to the right store. Use for ANY memory lookup.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "What to search for."},
-                "include_verbatim": {"type": "boolean", "description": "Also search conversation history (mempalace). Default: auto (only if engram has no results).", "default": False},
                 "limit": {"type": "integer", "description": "Max results.", "default": 10}
             },
             "required": ["query"]
         }
     },
     "brain_save": {
-        "description": "Save a structured fact. Auto-detects conflicts via topic_key and supersedes stale entries. Saves to engram (structured) and optionally mempalace (verbatim).",
+        "description": "Save a structured fact. Auto-detects conflicts via topic_key and supersedes stale entries.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -471,8 +369,7 @@ TOOLS = {
                 "content": {"type": "string", "description": "The fact (what/why/where/learned)."},
                 "type": {"type": "string", "enum": ["decision", "architecture", "bugfix", "pattern", "config", "discovery", "learning", "manual"], "default": "manual"},
                 "topic_key": {"type": "string", "description": "Topic ID for conflict detection (e.g. 'auth/jwt-strategy')."},
-                "scope": {"type": "string", "enum": ["project", "personal"], "default": "project"},
-                "save_verbatim": {"type": "boolean", "description": "Also save verbatim to mempalace for full recall.", "default": False}
+                "scope": {"type": "string", "enum": ["project", "personal"], "default": "project"}
             },
             "required": ["title", "content"]
         }
@@ -488,7 +385,7 @@ TOOLS = {
         }
     },
     "brain_correct": {
-        "description": "Fix a wrong memory. Finds it in both stores, supersedes, saves corrected version.",
+        "description": "Fix a wrong memory. Finds it in engram, supersedes, saves corrected version.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -500,7 +397,7 @@ TOOLS = {
         }
     },
     "brain_forget": {
-        "description": "Soft-delete a memory from both stores.",
+        "description": "Soft-delete a memory from engram.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -515,19 +412,15 @@ TOOLS = {
 def handle_brain_query(p):
     query = p["query"]
     limit = p.get("limit", 10)
-    include_verbatim = p.get("include_verbatim", False)
 
     # Fix #6: Explicit store status
     status = _store_status()
     warnings = []
     if not status["engram_available"]:
         warnings.append("engram store unavailable — install with: brew tap gentleman-programming/tap && brew install engram")
-    if not status["mempalace_available"]:
-        warnings.append("mempalace store unavailable — install with: pipx install mempalace")
 
     structured = []
     global_results = []
-    verbatim = []
 
     # Search project engram
     if status["engram_available"] and status["engram_db_exists"]:
@@ -539,39 +432,17 @@ def handle_brain_query(p):
     project_ids = {r.get("id") for r in structured}
     global_results = [r for r in global_results if r.get("id") not in project_ids]
 
-    # Search mempalace if engram has no results or verbatim requested
-    if status["mempalace_available"] and status["mempalace_palace_exists"]:
-        if include_verbatim or (not structured and not global_results):
-            verbatim = mempalace_search(query, limit=min(limit, 10))
-
     return {
         "query": query,
         "structured": structured,
         "global": global_results,
-        "verbatim": verbatim,
-        "counts": {"structured": len(structured), "global": len(global_results), "verbatim": len(verbatim)},
-        "warnings": warnings,
-        "tip": "Structured results are curated facts. Verbatim are raw transcripts. Trust structured when both match."
+        "counts": {"structured": len(structured), "global": len(global_results)},
+        "warnings": warnings
     }
 
 def handle_brain_save(p):
-    # Save to engram (structured)
-    result = engram_save(p["title"], p["content"], type_tag=p.get("type", "manual"),
-                         topic_key=p.get("topic_key"), scope=p.get("scope", "project"))
-
-    # Fix #4: Optionally save verbatim to mempalace too
-    if p.get("save_verbatim") and result.get("success"):
-        mp_result = mempalace_save(
-            p["content"],
-            metadata={
-                "title": p["title"],
-                "type": p.get("type", "manual"),
-                "project": p.get("scope", "project")
-            }
-        )
-        result["mempalace"] = mp_result
-
-    return result
+    return engram_save(p["title"], p["content"], type_tag=p.get("type", "manual"),
+                       topic_key=p.get("topic_key"), scope=p.get("scope", "project"))
 
 def handle_brain_context(p):
     # Fix #6: Explicit store status
@@ -579,8 +450,6 @@ def handle_brain_context(p):
     warnings = []
     if not status["engram_available"]:
         warnings.append("engram store unavailable")
-    if not status["mempalace_available"]:
-        warnings.append("mempalace store unavailable")
 
     # Fix #7: Load ALL global memories, not just scope="personal"
     project_ctx = engram_context(limit=p.get("project_limit", 20), project=PROJECT_NAME) if status["engram_available"] else []
@@ -596,29 +465,23 @@ def handle_brain_context(p):
     }
 
 def handle_brain_correct(p):
-    # Fix #5: Search both stores
     existing = engram_search(p["search_query"], limit=3, project=PROJECT_NAME)
-    mempalace_results = mempalace_search(p["search_query"], limit=3) if _store_status()["mempalace_available"] else []
 
-    if not existing and not mempalace_results:
-        return {"success": False, "error": f"No memory found for '{p['search_query']}' in either store"}
+    if not existing:
+        return {"success": False, "error": f"No memory found for '{p['search_query']}'"}
 
-    # Correct engram if found
-    engram_result = None
-    if existing and not (isinstance(existing[0], dict) and "error" in existing[0]):
-        target = existing[0]
-        engram_delete(target["id"])
-        new = engram_save(f"[corrected] {target.get('title', p['search_query'])}",
-                          p["corrected_content"], type_tag=target.get("type", "manual"),
-                          topic_key=target.get("topic_key"))
-        engram_result = {"old_id": target["id"], "new": new}
+    target = existing[0]
+    if isinstance(target, dict) and "error" in target:
+        return {"success": False, "error": target["error"]}
 
-    # Note mempalace findings for manual cleanup if needed
+    engram_delete(target["id"])
+    new = engram_save(f"[corrected] {target.get('title', p['search_query'])}",
+                      p["corrected_content"], type_tag=target.get("type", "manual"),
+                      topic_key=target.get("topic_key"))
+
     return {
         "corrected": True,
-        "engram": engram_result,
-        "mempalace_matches": len(mempalace_results),
-        "mempalace_note": "mempalace content identified — remove matching files from palace directory if needed",
+        "engram": {"old_id": target["id"], "new": new},
         "reason": p.get("reason", "user correction")
     }
 
@@ -626,23 +489,12 @@ def handle_brain_forget(p):
     if not p.get("confirm"):
         return {"success": False, "error": "Set confirm=true to delete. Irreversible."}
 
-    # Fix #5: Delete from both stores
     existing = engram_search(p["search_query"], limit=1, project=PROJECT_NAME)
-    mempalace_results = mempalace_search(p["search_query"], limit=1) if _store_status()["mempalace_available"] else []
 
-    engram_result = None
-    if existing and not (isinstance(existing[0], dict) and "error" in existing[0]):
-        engram_result = engram_delete(existing[0]["id"])
+    if not existing or (isinstance(existing[0], dict) and "error" in existing[0]):
+        return {"success": False, "error": f"No memory found for '{p['search_query']}'"}
 
-    mempalace_result = None
-    if mempalace_results:
-        mempalace_result = mempalace_delete(p["search_query"])
-
-    return {
-        "engram": engram_result,
-        "mempalace": mempalace_result,
-        "note": "Memory deleted from engram. Mempalace content identified for manual cleanup if needed."
-    }
+    return engram_delete(existing[0]["id"])
 
 HANDLERS = {
     "brain_query": handle_brain_query, "brain_save": handle_brain_save,
@@ -660,7 +512,7 @@ def handle_request(req):
         return {"jsonrpc": "2.0", "id": rid, "result": {
             "protocolVersion": "2024-11-05",
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "brain-router", "version": "0.3.0"}
+            "serverInfo": {"name": "brain-router", "version": "0.4.0"}
         }}
     if method == "notifications/initialized":
         return None

@@ -7,10 +7,8 @@ PROJECT="${CLAUDE_PROJECT_DIR:-${PWD}}"
 PROJECT_NAME="$(basename "$PROJECT")"
 ENGRAM_DB="${HOME}/.engram/${PROJECT_NAME}.db"
 [ -f "$ENGRAM_DB" ] || ENGRAM_DB="${HOME}/.engram/engram.db"
-MEMPALACE_PALACE="${HOME}/.mempalace/${PROJECT_NAME}"
-[ -d "$MEMPALACE_PALACE" ] || MEMPALACE_PALACE="${HOME}/.mempalace/global"
 
-PROJECT_COUNT=0; GLOBAL_COUNT=0; MEMPALACE_COUNT=0; LAST_SAVE="n/a"
+PROJECT_COUNT=0; GLOBAL_COUNT=0; LAST_SAVE="n/a"
 
 # Register session start via direct SQLite (engram has no session-start CLI)
 # CRITICAL: Use unique session ID per session — static IDs collapse all sessions into one
@@ -31,15 +29,10 @@ if command -v engram >/dev/null 2>&1; then
   fi
 fi
 
-if command -v mempalace >/dev/null 2>&1 && [ -d "$MEMPALACE_PALACE" ]; then
-  MEMPALACE_COUNT=$(mempalace --palace "$MEMPALACE_PALACE" status 2>/dev/null | awk '/drawer|session|file/ {sum+=$NF} END {print sum}' | tr -d ',')
-fi
-
 cat <<EOF
 [persistent-brain]
   project:   ${PROJECT_NAME}
   engram:    ${PROJECT_COUNT:-0} project memories · ${GLOBAL_COUNT:-0} global
-  mempalace: ${MEMPALACE_COUNT:-0} items indexed
   router:    use brain_query for all lookups · brain_save for facts · brain_context on session start
 EOF
 
