@@ -1,8 +1,8 @@
 # Handoff — persistent-brain LTM System
 
 **Date:** 2026-04-22
-**Version:** v0.4.0
-**Status:** Production-ready, engram-only, auto-distill disabled
+**Version:** v0.5.0
+**Status:** Production-ready, engram-only
 
 ## What This Is
 
@@ -12,7 +12,6 @@ Portable, local-first memory system for AI coding agents. Unified brain-router o
 
 - **brain-router** — unified query/save interface (Python, zero deps)
 - **engram** — structured facts, decisions, bugfixes, patterns (SQLite+FTS5)
-- **mempalace** — READ-ONLY semantic search (stripped from write path)
 - **Session lifecycle** — session-start.sh → brain_context → session-end.sh → engram.sync
 
 ## Current State
@@ -22,18 +21,19 @@ Portable, local-first memory system for AI coding agents. Unified brain-router o
 - **Topic key enforcement:** active (brain-router validates format)
 - **Project consolidation:** 15 canonical mappings in ~/.engram/project-map.json
 - **Data quality:** 23.7% actionable (up from pre-cleanup baseline)
+- **mempalace:** fully stripped from operational path (v0.5.0)
 
 ## Key Files
 
 | File | Purpose |
 |---|---|
-| router/brain_router.py | v0.4.0 — unified router with validation |
+| router/brain_router.py | v0.5.0 — unified router with validation |
 | hooks/session-start.sh | Loads brain_context at session start |
 | hooks/session-end.sh | Closes session, runs engram.sync |
 | hooks/pre-compact.sh | Pre-compaction checkpoint trigger |
-| scripts/brain-init.sh | Initialize project-scoped brain |
+| scripts/brain-init.sh | Initialize project-scoped brain (engram only) |
 | scripts/brain-inspect.sh | Inspect what agent knows |
-| scripts/brain-status.sh | Health check |
+| scripts/brain-status.sh | Health check (engram only) |
 | scripts/brain-cleanup.sh | Soft-delete auto-distill noise |
 | scripts/brain-backfill-topickeys.sh | Backfill missing topic_keys |
 | config/AGENTS.md | Agent instructions |
@@ -52,7 +52,6 @@ Portable, local-first memory system for AI coding agents. Unified brain-router o
 - Auto-distill is OFF — agents must manually save via brain_save
 - topic_key is mandatory for decision/architecture/bugfix/pattern/config types
 - No "discovery" type — reserved, use "manual" or "learning" instead
-- Mempalace is read-only — do not write to it during normal save rhythm
 - Project map must be kept in sync with actual worktree names
 
 ## Next Steps

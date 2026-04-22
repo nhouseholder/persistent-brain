@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# brain-init.sh <project-path> — create a per-project engram DB + mempalace palace,
+# brain-init.sh <project-path> — create a per-project engram DB,
 # and drop .mcp.json + AGENTS.md into the project so any agent auto-wires correctly.
 # Now includes the unified brain-router alongside the direct stores.
 set -euo pipefail
@@ -19,11 +19,9 @@ PROJECT_PATH="$(cd "$PROJECT_PATH" && pwd)"
 PROJECT_NAME="$(basename "$PROJECT_PATH")"
 
 ENGRAM_DB="${HOME}/.engram/${PROJECT_NAME}.db"
-MEMPALACE_DIR="${HOME}/.mempalace/${PROJECT_NAME}"
 BRAIN_ROUTER="${REPO_DIR}/bin/brain-router"
 
 command -v engram    >/dev/null 2>&1 || die "engram not installed — run ./install.sh first"
-command -v mempalace >/dev/null 2>&1 || die "mempalace not installed — run ./install.sh first"
 
 # Engram: create project DB (lazy; first save creates the file)
 mkdir -p "$(dirname "$ENGRAM_DB")"
@@ -32,15 +30,7 @@ if [ ! -f "$ENGRAM_DB" ]; then
 fi
 ok "engram DB: $ENGRAM_DB"
 
-# Mempalace: create project palace
-mkdir -p "$MEMPALACE_DIR"
-if [ ! -f "$MEMPALACE_DIR/mempalace.yaml" ]; then
-  mempalace init "$MEMPALACE_DIR" --yes >/dev/null 2>&1 \
-    || die "mempalace init failed for $MEMPALACE_DIR"
-fi
-ok "mempalace palace: $MEMPALACE_DIR"
-
-# Write project .mcp.json — brain-router (primary) + direct stores (fallback)
+# Write project .mcp.json — brain-router (primary) + engram (fallback)
 MCP_JSON="${PROJECT_PATH}/.mcp.json"
 if [ -f "$MCP_JSON" ] && grep -q brain-router "$MCP_JSON" 2>/dev/null; then
   info "$MCP_JSON already wired with brain-router — leaving alone"
@@ -52,23 +42,18 @@ else
       "command": "${BRAIN_ROUTER}",
       "env": {
         "BRAIN_PROJECT": "${PROJECT_NAME}",
-        "ENGRAM_DB": "${ENGRAM_DB}",
-        "MEMPALACE_PALACE": "${MEMPALACE_DIR}"
+        "ENGRAM_DB": "${ENGRAM_DB}"
       }
     },
     "engram": {
       "command": "engram",
       "args": ["mcp"],
       "env": { "ENGRAM_DB": "${ENGRAM_DB}" }
-    },
-    "mempalace": {
-      "command": "mempalace-mcp",
-      "env": { "MEMPALACE_PALACE": "${MEMPALACE_DIR}" }
     }
   }
 }
 EOF
-  ok "wrote $MCP_JSON (brain-router + engram + mempalace)"
+  ok "wrote $MCP_JSON (brain-router + engram)"
 fi
 
 # Write project AGENTS.md
@@ -79,11 +64,10 @@ if [ ! -f "$AGENTS_MD" ]; then
 
 ## Memory
 
-Three MCP servers are wired for this project via \`.mcp.json\`:
+Two MCP servers are wired for this project via \`.mcp.json\`:
 
 - **brain-router** — unified query/save interface (use this by default)
 - **engram** — direct access to structured facts: \`${ENGRAM_DB}\`
-- **mempalace** — direct access to conversation recall: \`${MEMPALACE_DIR}\`
 
 ### Quick reference
 

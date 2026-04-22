@@ -4,18 +4,13 @@
       "command": "/Users/nicholashouseholder/persistent-brain/bin/brain-router",
       "env": {
         "BRAIN_PROJECT": "persistent-brain",
-        "ENGRAM_DB": "/Users/nicholashouseholder/.engram/persistent-brain.db",
-        "MEMPALACE_PALACE": "/Users/nicholashouseholder/.mempalace/persistent-brain"
+        "ENGRAM_DB": "/Users/nicholashouseholder/.engram/persistent-brain.db"
       }
     },
     "engram": {
       "command": "engram",
       "args": ["mcp"],
       "env": { "ENGRAM_DB": "/Users/nicholashouseholder/.engram/persistent-brain.db" }
-    },
-    "mempalace": {
-      "command": "mempalace-mcp",
-      "env": { "MEMPALACE_PALACE": "/Users/nicholashouseholder/.mempalace/persistent-brain" }
     }
   }
 }
