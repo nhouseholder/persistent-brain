@@ -3,7 +3,7 @@
 set +e
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
 
-PROJECT="${CLAUDE_PROJECT_DIR:-${PWD}}"
+PROJECT="${OPENCODE_PROJECT_DIR:-${PWD}}"
 PROJECT_NAME="$(basename "$PROJECT")"
 
 # Resolve canonical project name from project-map.json

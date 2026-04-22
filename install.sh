@@ -88,6 +88,19 @@ ok "Global mempalace palace ready: $GLOBAL_MEMPALACE"
 CONFIG_SNIPPET="$REPO_DIR/config/mcp-servers.json"
 [ -f "$CONFIG_SNIPPET" ] || die "Missing $CONFIG_SNIPPET"
 
+wire_opencode() {
+  local target="${HOME}/.opencode/settings.json"
+  if [ ! -f "$target" ]; then
+    warn "$target not found — skipping OpenCode wiring. Run \`opencode\` once to create it, then rerun this script."
+    return
+  fi
+  if grep -q '"engram"' "$target" 2>/dev/null; then
+    ok "OpenCode: engram+mempalace already wired in $target"
+    return
+  fi
+  warn "OpenCode: add the mcpServers block from $CONFIG_SNIPPET to $target manually (we don't auto-edit your MCP config)."
+}
+
 wire_claude_code() {
   local target="${HOME}/.claude.json"
   if [ ! -f "$target" ]; then
@@ -114,29 +127,31 @@ wire_codex() {
   warn "Codex: see examples/codex-setup.md for the TOML snippet to add to $target"
 }
 
+wire_opencode
 wire_claude_code
 wire_codex
 
-# ---------- 8. Hooks (Claude Code) ----------
-HOOKS_DIR="${HOME}/.claude/hooks"
-mkdir -p "$HOOKS_DIR" 2>/dev/null || true
-
-for hook_file in session-start.sh session-end.sh pre-compact.sh; do
-  HOOK_SRC="$REPO_DIR/hooks/$hook_file"
-  HOOK_DEST="$HOOKS_DIR/persistent-brain-$hook_file"
-  if [ -f "$HOOK_SRC" ]; then
-    cp "$HOOK_SRC" "$HOOK_DEST"
-    chmod +x "$HOOK_DEST"
-    ok "Installed hook: $HOOK_DEST"
-  fi
+# ---------- 8. Hooks (OpenCode + Claude Code) ----------
+for hooks_dir in "${HOME}/.opencode/hooks" "${HOME}/.claude/hooks"; do
+  mkdir -p "$hooks_dir" 2>/dev/null || true
+  for hook_file in session-start.sh session-end.sh pre-compact.sh; do
+    HOOK_SRC="$REPO_DIR/hooks/$hook_file"
+    HOOK_DEST="$hooks_dir/persistent-brain-$hook_file"
+    if [ -f "$HOOK_SRC" ]; then
+      cp "$HOOK_SRC" "$HOOK_DEST"
+      chmod +x "$HOOK_DEST"
+      ok "Installed hook: $HOOK_DEST"
+    fi
+  done
 done
-warn "Register hooks in ~/.claude/settings.json (see examples/claude-code-setup.md):"  
+warn "Register hooks in ~/.opencode/settings.json (see examples/opencode-setup.md):"
 echo "   SessionStart → persistent-brain-session-start.sh"
 echo "   SessionEnd   → persistent-brain-session-end.sh"
 echo "   PreCompact   → persistent-brain-pre-compact.sh"
 
 # ---------- 9. Agent-agnostic rules ----------
 info "Copy config/AGENTS.md into your agent's instruction file:"
+echo "   • OpenCode     → append to ~/.opencode/OPENCODE.md"
 echo "   • Claude Code  → append to ~/.claude/CLAUDE.md"
 echo "   • Codex        → append to ~/.codex/AGENTS.md"
 echo "   • Cursor       → drop into .cursor/rules/persistent-brain.mdc"

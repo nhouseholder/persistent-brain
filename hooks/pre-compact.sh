@@ -5,7 +5,7 @@ set +e
 
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
 
-PROJECT_NAME="$(basename "${CLAUDE_PROJECT_DIR:-${PWD}}")"
+PROJECT_NAME="$(basename "${OPENCODE_PROJECT_DIR:-${PWD}}")"
 ENGRAM_DB="${HOME}/.engram/${PROJECT_NAME}.db"
 [ -f "$ENGRAM_DB" ] || ENGRAM_DB="${HOME}/.engram/engram.db"
 

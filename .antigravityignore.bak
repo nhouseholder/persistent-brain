@@ -2,7 +2,7 @@
 .github
 node_modules
 .wrangler
-.claude
+.opencode
 .venv
 venv
 __pycache__
