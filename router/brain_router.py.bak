@@ -12,7 +12,6 @@ Tools: brain_query, brain_save, brain_context, brain_correct, brain_forget
 import json
 import math
 import os
-import re
 import sqlite3
 import subprocess
 import sys
@@ -262,29 +261,13 @@ def engram_context(db_path=None, limit=20, project=None, scope=None):
     finally:
         conn.close()
 
-VALID_TYPES = {"decision", "architecture", "bugfix", "pattern", "config", "learning", "manual"}
-STRUCTURED_TYPES = {"decision", "architecture", "bugfix", "pattern", "config"}
-TOPIC_KEY_PATTERN = re.compile(r"^[a-z0-9_-]+(/[a-z0-9_-]+)*$")
-
 def engram_save(title, content, type_tag="manual", project=None, scope="project", topic_key=None):
-    if type_tag == "discovery":
-        return {"success": False, "error": "discovery type is reserved for auto-distill; use 'manual' or 'learning' instead"}
-    if type_tag not in VALID_TYPES:
-        return {"success": False, "error": f"Invalid type '{type_tag}'. Valid types: {', '.join(sorted(VALID_TYPES))}"}
-    if type_tag in STRUCTURED_TYPES and topic_key is None:
-        return {"success": False, "error": f"topic_key is required for type '{type_tag}'. Use format: project/<name>/{type_tag}/<topic>"}
-    if topic_key is not None and not TOPIC_KEY_PATTERN.match(topic_key):
-        return {"success": False, "error": f"Invalid topic_key format '{topic_key}'. Must match: ^[a-z0-9_-]+(/[a-z0-9_-]+)*$"}
-
     conn = _get_db()
     if not conn:
         return {"success": False, "error": f"Database not found: {ENGRAM_DB}"}
     _migrate(conn)
     proj = project or PROJECT_NAME
     conflicts = []
-    warnings = []
-    if "**" not in content:
-        warnings.append("Content does not use structured format (**What**/**Why**/**Where**/**Learned**). Consider adding structure for better retrieval.")
     try:
         # Conflict detection via topic_key
         if topic_key:
@@ -317,8 +300,6 @@ def engram_save(title, content, type_tag="manual", project=None, scope="project"
             result["superseded"] = [c["id"] for c in conflicts]
             result["superseded_count"] = len(conflicts)
             result["note"] = f"Superseded {len(conflicts)} older entries with topic_key '{topic_key}'"
-        if warnings:
-            result["warnings"] = warnings
         return result
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -386,8 +367,8 @@ TOOLS = {
             "properties": {
                 "title": {"type": "string", "description": "Short title."},
                 "content": {"type": "string", "description": "The fact (what/why/where/learned)."},
-                "type": {"type": "string", "enum": ["decision", "architecture", "bugfix", "pattern", "config", "learning", "manual"], "default": "manual"},
-                "topic_key": {"type": "string", "description": "Topic ID for conflict detection (e.g. 'auth/jwt-strategy'). Required for structured types (decision, architecture, bugfix, pattern, config)."},
+                "type": {"type": "string", "enum": ["decision", "architecture", "bugfix", "pattern", "config", "discovery", "learning", "manual"], "default": "manual"},
+                "topic_key": {"type": "string", "description": "Topic ID for conflict detection (e.g. 'auth/jwt-strategy')."},
                 "scope": {"type": "string", "enum": ["project", "personal"], "default": "project"}
             },
             "required": ["title", "content"]

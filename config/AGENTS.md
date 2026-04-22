@@ -28,7 +28,32 @@ When you complete significant work (bugfix, architecture decision, preference le
 
 1. Call `brain_save` with a clear title, the content (what/why/where/learned), and a `type`.
 2. Include a `topic_key` when the fact belongs to a category (e.g., `database`, `auth-flow`, `deploy-target`). This enables automatic conflict detection.
-3. **Never double-write.** One fact, one save. The session-end hook will auto-distill anything you missed.
+3. **Never double-write.** One fact, one save.
+
+## Memory Quality Checklist
+
+Before calling `brain_save`, verify:
+
+- [ ] **Type is valid**: `decision`, `architecture`, `bugfix`, `pattern`, `config`, `learning`, or `manual`
+- [ ] **topic_key provided** (required for `decision`, `architecture`, `bugfix`, `pattern`, `config`)
+- [ ] **topic_key format**: lowercase, hyphens, slashes only (e.g., `project/mmalogic/bugfix/auth-loop`)
+- [ ] **Content uses structured format**:
+  ```
+  **What**: [concise description]
+  **Why**: [reasoning or problem]
+  **Where**: [files/paths affected]
+  **Learned**: [gotchas or edge cases]
+  ```
+
+**Example:**
+```json
+{
+  "title": "Fixed auth loop on token refresh",
+  "content": "**What**: Replaced synchronous token refresh with async queue to prevent race conditions\n**Why**: Multiple concurrent requests triggered overlapping refreshes, invalidating each other's tokens\n**Where**: src/auth/refresh.ts, src/middleware/auth.ts\n**Learned**: Always debounce token refresh; never rely on client-side clock for expiry",
+  "type": "bugfix",
+  "topic_key": "project/myapp/bugfix/auth-refresh-race"
+}
+```
 
 ## Corrections
 
