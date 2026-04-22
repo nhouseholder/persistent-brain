@@ -5,6 +5,18 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
 
 PROJECT="${CLAUDE_PROJECT_DIR:-${PWD}}"
 PROJECT_NAME="$(basename "$PROJECT")"
+
+# Resolve canonical project name from project-map.json
+CANONICAL_NAME="$PROJECT_NAME"
+if [ -f "${HOME}/.engram/project-map.json" ] && command -v python3 >/dev/null 2>&1; then
+  CANONICAL_NAME=$(python3 -c "
+import json, sys
+with open('${HOME}/.engram/project-map.json') as f:
+  m = json.load(f)
+print(m.get('${PROJECT_NAME}', '${PROJECT_NAME}'))
+" 2>/dev/null)
+fi
+
 ENGRAM_DB="${HOME}/.engram/${PROJECT_NAME}.db"
 [ -f "$ENGRAM_DB" ] || ENGRAM_DB="${HOME}/.engram/engram.db"
 
@@ -31,7 +43,7 @@ fi
 
 cat <<EOF
 [persistent-brain]
-  project:   ${PROJECT_NAME}
+  project:   ${PROJECT_NAME} (canonical: ${CANONICAL_NAME})
   engram:    ${PROJECT_COUNT:-0} project memories · ${GLOBAL_COUNT:-0} global
   router:    use brain_query for all lookups · brain_save for facts · brain_context on session start
 EOF

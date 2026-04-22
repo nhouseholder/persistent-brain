@@ -26,6 +26,30 @@ from datetime import datetime, timezone
 PROJECT_NAME = os.environ.get("BRAIN_PROJECT", os.path.basename(os.getcwd()))
 ENGRAM_DB = os.environ.get("ENGRAM_DB", os.path.expanduser(f"~/.engram/{PROJECT_NAME}.db"))
 ENGRAM_GLOBAL_DB = os.path.expanduser("~/.engram/engram.db")
+PROJECT_MAP_PATH = os.path.expanduser("~/.engram/project-map.json")
+
+_project_map_cache = None
+
+def _load_project_map():
+    """Load canonical project name mapping from project-map.json. Cached."""
+    global _project_map_cache
+    if _project_map_cache is not None:
+        return _project_map_cache
+    if not os.path.isfile(PROJECT_MAP_PATH):
+        _project_map_cache = {}
+        return _project_map_cache
+    try:
+        with open(PROJECT_MAP_PATH, "r") as f:
+            _project_map_cache = json.load(f)
+        return _project_map_cache
+    except Exception:
+        _project_map_cache = {}
+        return _project_map_cache
+
+def _canonical_project(name):
+    """Return canonical project name from map, or original if not mapped."""
+    mapping = _load_project_map()
+    return mapping.get(name, name)
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +224,7 @@ def _track_access(conn, obs_ids):
 # Engram operations (direct SQLite)
 # ---------------------------------------------------------------------------
 
-def engram_search(query, db_path=None, limit=10, project=None):
+def engram_search(query, db_path=None, limit=10, project=None, canonical_project=None):
     conn = _get_db(db_path)
     if not conn:
         return []
@@ -215,7 +239,15 @@ def engram_search(query, db_path=None, limit=10, project=None):
             WHERE observations_fts MATCH ? AND o.deleted_at IS NULL
         """
         params = [query]
-        if project:
+        if canonical_project:
+            # Resolve all worktree names mapped to this canonical project
+            mapping = _load_project_map()
+            worktree_names = [k for k, v in mapping.items() if v == canonical_project]
+            worktree_names.append(canonical_project)  # include canonical name itself
+            placeholders = ",".join("?" * len(worktree_names))
+            sql += f" AND o.project IN ({placeholders})"
+            params.extend(worktree_names)
+        elif project:
             sql += " AND o.project = ?"
             params.append(project)
         sql += " ORDER BY rank LIMIT ?"

@@ -9,6 +9,18 @@ info() { printf "\033[36m→\033[0m %s\n" "$*"; }
 dim()  { printf "\033[90m  %s\033[0m\n" "$*"; }
 
 PROJECT_NAME="${1:-$(basename "${PWD}")}"
+
+# Resolve canonical project name from project-map.json
+CANONICAL_NAME="$PROJECT_NAME"
+if [ -f "${HOME}/.engram/project-map.json" ] && command -v python3 >/dev/null 2>&1; then
+  CANONICAL_NAME=$(python3 -c "
+import json, sys
+with open('${HOME}/.engram/project-map.json') as f:
+  m = json.load(f)
+print(m.get('${PROJECT_NAME}', '${PROJECT_NAME}'))
+" 2>/dev/null)
+fi
+
 ENGRAM_DB="${HOME}/.engram/${PROJECT_NAME}.db"
 ENGRAM_GLOBAL="${HOME}/.engram/engram.db"
 MEMPALACE_PALACE="${HOME}/.mempalace/${PROJECT_NAME}"
@@ -16,6 +28,9 @@ MEMPALACE_PALACE="${HOME}/.mempalace/${PROJECT_NAME}"
 
 echo "╔══════════════════════════════════════════════════════╗"
 echo "║  persistent-brain inspector — ${PROJECT_NAME}"
+if [ "$CANONICAL_NAME" != "$PROJECT_NAME" ]; then
+  echo "║  canonical: ${CANONICAL_NAME}"
+fi
 echo "╚══════════════════════════════════════════════════════╝"
 echo
 
@@ -96,19 +111,50 @@ echo "━━━ Disk Usage ━━━"
 [ -d "$HOME/.engram" ] && printf "  engram:    %s\n" "$(du -sh "$HOME/.engram" 2>/dev/null | awk '{print $1}')"
 [ -d "$HOME/.mempalace" ] && printf "  mempalace: %s\n" "$(du -sh "$HOME/.mempalace" 2>/dev/null | awk '{print $1}')"
 
-# ---------- 7. All project brains ----------
+# ---------- 7. All project brains (grouped by canonical name) ----------
 echo
-echo "━━━ All Brains ━━━"
+echo "━━━ All Brains (grouped by canonical name) ━━━"
 if [ -d "$HOME/.engram" ]; then
-  for DB in "$HOME"/.engram/*.db; do
-    [ -f "$DB" ] || continue
-    name="$(basename "$DB" .db)"
-    SIZE=$(ls -lh "$DB" 2>/dev/null | awk '{print $5}')
-    COUNT=$(sqlite3 "$DB" "SELECT COUNT(*) FROM observations WHERE deleted_at IS NULL;" 2>/dev/null)
-    HAS_PALACE=" "
-    [ -d "$HOME/.mempalace/$name" ] && HAS_PALACE="✓"
-    printf "  [%s] %-25s %4s memories  %6s\n" "$HAS_PALACE" "$name" "${COUNT:-?}" "${SIZE:-?}"
-  done
+  # Build canonical grouping via Python
+  if command -v python3 >/dev/null 2>&1 && [ -f "${HOME}/.engram/project-map.json" ]; then
+    python3 <<'PYEOF'
+import json, os, sqlite3, subprocess
+from collections import defaultdict
+
+with open(os.path.expanduser("~/.engram/project-map.json")) as f:
+    mapping = json.load(f)
+
+groups = defaultdict(list)
+for db in sorted(os.listdir(os.path.expanduser("~/.engram"))):
+    if not db.endswith(".db"):
+        continue
+    name = db[:-3]
+    canonical = mapping.get(name, name)
+    db_path = os.path.expanduser(f"~/.engram/{db}")
+    try:
+        conn = sqlite3.connect(db_path)
+        count = conn.execute("SELECT COUNT(*) FROM observations WHERE deleted_at IS NULL").fetchone()[0]
+        conn.close()
+    except Exception:
+        count = "?"
+    size = subprocess.run(["ls", "-lh", db_path], capture_output=True, text=True).stdout.strip().split()[4] if subprocess.run(["ls", "-lh", db_path], capture_output=True, text=True).returncode == 0 else "?"
+    groups[canonical].append((name, count, size))
+
+for canonical in sorted(groups.keys()):
+    print(f"\n  {canonical}:")
+    for name, count, size in sorted(groups[canonical]):
+        marker = " →" if name != canonical else "  "
+        print(f"    {marker} {name:<25} {count:>4} memories  {size:>6}")
+PYEOF
+  else
+    # Fallback: plain list
+    for DB in "$HOME"/.engram/*.db; do
+      [ -f "$DB" ] || continue
+      name="$(basename "$DB" .db)"
+      SIZE=$(ls -lh "$DB" 2>/dev/null | awk '{print $5}')
+      COUNT=$(sqlite3 "$DB" "SELECT COUNT(*) FROM observations WHERE deleted_at IS NULL;" 2>/dev/null)
+      printf "  %-25s %4s memories  %6s\n" "$name" "${COUNT:-?}" "${SIZE:-?}"
+    done
+  fi
 fi
-dim "[✓] = has matching MemPalace"
 echo
