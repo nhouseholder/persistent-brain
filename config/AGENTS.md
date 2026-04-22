@@ -1,6 +1,6 @@
 # Persistent Brain — Memory Rules
 
-You have a unified memory system available via the **brain-router** MCP server. It manages two stores internally (engram for structured facts, mempalace for verbatim conversation recall) — you don't need to pick which one to use.
+You have a unified memory system available via the **brain-router** MCP server. It routes queries to engram (structured facts) automatically — you don't need to manage stores manually.
 
 ## Tools
 
@@ -12,7 +12,7 @@ You have a unified memory system available via the **brain-router** MCP server. 
 | `brain_correct` | Fix a wrong memory — automatically supersedes the old entry |
 | `brain_forget` | Remove a memory the user wants deleted |
 
-> **You also still have direct access to `engram` and `mempalace` MCP tools.** Use the `brain_*` tools by default — fall back to the direct tools only for advanced operations (timeline, stats, manual session management).
+> **You also have direct access to `engram` MCP tools.** Use the `brain_*` tools by default — fall back to direct engram tools only for advanced operations (timeline, stats, manual session management).
 
 ## Session start protocol
 
@@ -48,6 +48,6 @@ Every project has its own memory store. There's also a global store for user-lev
 ## Token economy
 
 - `brain_context` is cheap (~2K tokens). Call it every session.
-- `brain_query` searches engram first (fast) and only hits mempalace if needed.
+- `brain_query` searches engram directly (fast, FTS5 full-text search).
 - If you only need a quick fact check, use `brain_query` with the default settings.
-- If you need full conversation replay, call `brain_query` with `include_verbatim: true`.
+- For chronological context around a specific observation, use `engram_mem_timeline` directly.

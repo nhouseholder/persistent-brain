@@ -1,24 +1,16 @@
 {
-  "_comment": "Drop this mcpServers block into your agent's MCP config. brain-router is the unified interface — it routes queries to engram and mempalace automatically. The direct engram/mempalace servers are kept for advanced operations.",
+  "_comment": "Drop this mcpServers block into your agent's MCP config. brain-router is the unified interface — it routes queries to engram automatically. The direct engram server is kept for advanced operations (timeline, stats, manual session management).",
   "mcpServers": {
     "brain-router": {
       "command": "brain-router",
       "env": {
         "BRAIN_PROJECT": "${BRAIN_PROJECT:-global}",
-        "ENGRAM_DB": "${ENGRAM_DB:-$HOME/.engram/engram.db}",
-        "MEMPALACE_PALACE": "${MEMPALACE_PALACE:-$HOME/.mempalace/global}"
+        "ENGRAM_DB": "${ENGRAM_DB:-$HOME/.engram/engram.db}"
       }
     },
     "engram": {
       "command": "engram",
       "args": ["mcp"]
-    },
-    "mempalace": {
-      "command": "mempalace-mcp",
-      "args": [],
-      "env": {
-        "MEMPALACE_PALACE": "${MEMPALACE_PALACE:-$HOME/.mempalace/global}"
-      }
     }
   }
 }
