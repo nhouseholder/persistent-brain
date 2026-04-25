@@ -45,6 +45,28 @@ Before your first substantive reply in a new session:
 2. Treat the returned memories as authoritative. Do not ask the user to repeat anything already in them.
 3. Do **not** preemptively search for conversations — only query when the user asks about prior sessions.
 
+## Codebase Diagram Protocol
+
+**Generate once, reuse forever.** Every project needs a codebase architecture diagram stored under `topic_key="codebase/diagram/{PROJECT_NAME}"`.
+
+```
+STEP 1: brain_query(query="codebase diagram", topic_key="codebase/diagram/{PROJECT_NAME}")
+    ├─ FOUND → Check staleness (>7 days OR major refactor?)
+    │          ├─ FRESH → Use it
+    │          └─ STALE → Regenerate via CGC CLI
+    └─ NOT FOUND → Regenerate via CGC CLI
+
+CGC CLI method (preferred — no approval timeouts):
+  cgc index . --force
+  cgc stats
+  cgc analyze complexity --limit 10
+  cgc analyze dead-code
+  Synthesize → brain_save(topic_key="codebase/diagram/{PROJECT_NAME}", type="architecture")
+  If brain_save fails → write to CODEBASE_DIAGRAM.md in project root
+```
+
+**Stale criteria**: >7 days old, new top-level dirs, framework/build system changed, >20% file churn, new API layer or database, auth/deployment architecture changed.
+
 ## Save rules
 
 When you complete significant work (bugfix, architecture decision, preference learned, etc.):
