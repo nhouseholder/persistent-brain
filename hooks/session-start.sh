@@ -1,51 +1,29 @@
-#!/usr/bin/env bash
-# SessionStart hook — register session + emit brain summary to agent context.
-set +e
-export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
+#!/bin/bash
+# Session start hook for persistent-brain
+# Loads brain_context + checks for CGC codebase diagram
 
-PROJECT="${OPENCODE_PROJECT_DIR:-${PWD}}"
-PROJECT_NAME="$(basename "$PROJECT")"
+set -e
 
-# Resolve canonical project name from project-map.json
-CANONICAL_NAME="$PROJECT_NAME"
-if [ -f "${HOME}/.engram/project-map.json" ] && command -v python3 >/dev/null 2>&1; then
-  CANONICAL_NAME=$(python3 -c "
-import json, sys
-with open('${HOME}/.engram/project-map.json') as f:
-  m = json.load(f)
-print(m.get('${PROJECT_NAME}', '${PROJECT_NAME}'))
-" 2>/dev/null)
+PROJECT="${BRAIN_PROJECT:-$(basename "$(pwd)")}"
+echo "[persistent-brain] Session start for project: $PROJECT"
+
+# 1. Load temporal context from engram
+echo "[persistent-brain] Loading engram context..."
+# brain_context is called by the agent via MCP — this hook just logs
+
+# 2. Check for CGC codebase diagram
+echo "[persistent-brain] Checking CodeGraphContext..."
+if command -v cgc &>/dev/null; then
+    if cgc list 2>/dev/null | grep -q "$PROJECT"; then
+        echo "[persistent-brain] ✓ CGC graph found for $PROJECT"
+        echo "[persistent-brain] Stats: $(cgc stats . 2>/dev/null | grep -E 'Files|Functions|Classes' | tr '\n' ' ')"
+    else
+        echo "[persistent-brain] ⚠️ No CGC graph found. Consider indexing:"
+        echo "[persistent-brain]   cgc add_code_to_graph path=. is_dependency=false"
+    fi
+else
+    echo "[persistent-brain] ⚠️ CodeGraphContext not installed. Structural memory unavailable."
+    echo "[persistent-brain]   Install: uv tool install codegraphcontext"
 fi
 
-ENGRAM_DB="${HOME}/.engram/${PROJECT_NAME}.db"
-[ -f "$ENGRAM_DB" ] || ENGRAM_DB="${HOME}/.engram/engram.db"
-
-PROJECT_COUNT=0; GLOBAL_COUNT=0; LAST_SAVE="n/a"
-
-# Register session start via direct SQLite (engram has no session-start CLI)
-# CRITICAL: Use unique session ID per session — static IDs collapse all sessions into one
-if command -v sqlite3 >/dev/null 2>&1 && [ -f "$ENGRAM_DB" ]; then
-  SESSION_ID="hook-${PROJECT_NAME}-$(date +%s)-$$"
-  sqlite3 "$ENGRAM_DB" \
-    "INSERT INTO sessions (id, project, directory, started_at) VALUES ('$SESSION_ID', '$PROJECT_NAME', '$PROJECT', datetime('now'));" \
-    >/dev/null 2>&1
-fi
-
-if command -v engram >/dev/null 2>&1; then
-  if [ -f "${HOME}/.engram/${PROJECT_NAME}.db" ]; then
-    PROJECT_COUNT=$(ENGRAM_DB="${HOME}/.engram/${PROJECT_NAME}.db" engram stats 2>/dev/null | awk '/Observations/ {print $NF; exit}' | tr -d ',')
-  fi
-  GLOBAL_DB="${HOME}/.engram/engram.db"
-  if [ -f "$GLOBAL_DB" ]; then
-    GLOBAL_COUNT=$(ENGRAM_DB="$GLOBAL_DB" engram stats 2>/dev/null | awk '/Observations/ {print $NF; exit}' | tr -d ',')
-  fi
-fi
-
-cat <<EOF
-[persistent-brain]
-  project:   ${PROJECT_NAME} (canonical: ${CANONICAL_NAME})
-  engram:    ${PROJECT_COUNT:-0} project memories · ${GLOBAL_COUNT:-0} global
-  router:    use brain_query for all lookups · brain_save for facts · brain_context on session start
-EOF
-
-exit 0
+echo "[persistent-brain] Session start complete. Agent should now call brain_context."

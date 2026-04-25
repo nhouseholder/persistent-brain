@@ -399,6 +399,41 @@ def engram_delete(obs_id):
 # Tool handlers
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# CGC integration — structural memory layer
+# ---------------------------------------------------------------------------
+
+def _cgc_available():
+    """Check if CodeGraphContext CLI is installed."""
+    try:
+        subprocess.run(["cgc", "--version"], capture_output=True, timeout=3)
+        return True
+    except Exception:
+        return False
+
+def _cgc_run(args):
+    """Run a cgc command and return parsed JSON output."""
+    try:
+        result = subprocess.run(
+            ["cgc"] + args,
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            return {"error": result.stderr or "cgc command failed"}
+        # Try to parse JSON, fallback to raw text
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return {"output": result.stdout}
+    except subprocess.TimeoutExpired:
+        return {"error": "cgc command timed out (>30s)"}
+    except Exception as e:
+        return {"error": str(e)}
+
+# ---------------------------------------------------------------------------
+# Tool definitions
+# ---------------------------------------------------------------------------
+
 TOOLS = {
     "brain_query": {
         "description": "Search all memory. Auto-routes to the right store. Use for ANY memory lookup.",
@@ -456,6 +491,36 @@ TOOLS = {
                 "confirm": {"type": "boolean", "default": False}
             },
             "required": ["search_query"]
+        }
+    },
+    "brain_diagram": {
+        "description": "Generate or load codebase architecture diagram via CodeGraphContext. Returns file counts, complexity hotspots, dead code, and structure.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Project path (default: cwd)", "default": "."},
+                "force_regenerate": {"type": "boolean", "description": "Force full reindex even if graph exists", "default": False}
+            }
+        }
+    },
+    "brain_callers": {
+        "description": "Find who calls a function or uses a symbol. Structural query via CodeGraphContext.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string", "description": "Function name or symbol to find callers for"},
+                "context": {"type": "string", "description": "File path for disambiguation", "default": ""}
+            },
+            "required": ["target"]
+        }
+    },
+    "brain_structure": {
+        "description": "Get repository stats from CodeGraphContext: files, functions, classes, modules.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "default": "."}
+            }
         }
     }
 }
@@ -547,10 +612,74 @@ def handle_brain_forget(p):
 
     return engram_delete(existing[0]["id"])
 
+def handle_brain_diagram(p):
+    path = p.get("path", ".")
+    force = p.get("force_regenerate", False)
+    
+    if not _cgc_available():
+        return {
+            "error": "CodeGraphContext not installed. Install: uv tool install codegraphcontext",
+            "diagram": None,
+            "engram_fallback": "Search engram for topic_key='codebase/diagram/{PROJECT_NAME}' instead"
+        }
+    
+    # Check if graph exists
+    contexts = _cgc_run(["list"])
+    has_graph = not ("error" in contexts and "No projects" in str(contexts.get("error", "")))
+    
+    if force or not has_graph:
+        # Force reindex
+        _cgc_run(["add_code_to_graph", path, "--is-dependency=false"])
+    
+    # Get stats
+    stats = _cgc_run(["stats", path])
+    
+    # Get complexity
+    complexity = _cgc_run(["analyze", "complexity", "--limit", "10"])
+    
+    # Get dead code
+    dead_code = _cgc_run(["analyze", "dead-code"])
+    
+    return {
+        "source": "codegraphcontext",
+        "path": path,
+        "stats": stats,
+        "complexity_hotspots": complexity,
+        "dead_code_candidates": dead_code,
+        "tip": "For historical context about this codebase, search engram with mem_search"
+    }
+
+def handle_brain_callers(p):
+    target = p["target"]
+    context = p.get("context", "")
+    
+    if not _cgc_available():
+        return {"error": "CodeGraphContext not installed"}
+    
+    # Use CGC's find_code for simple lookup
+    result = _cgc_run(["find_code", target])
+    return {
+        "target": target,
+        "context": context,
+        "results": result,
+        "tip": f"For call chain analysis, use CGC directly: cgc analyze call-chain --target {target}"
+    }
+
+def handle_brain_structure(p):
+    path = p.get("path", ".")
+    
+    if not _cgc_available():
+        return {"error": "CodeGraphContext not installed"}
+    
+    return _cgc_run(["stats", path])
+
 HANDLERS = {
     "brain_query": handle_brain_query, "brain_save": handle_brain_save,
     "brain_context": handle_brain_context, "brain_correct": handle_brain_correct,
     "brain_forget": handle_brain_forget,
+    "brain_diagram": handle_brain_diagram,
+    "brain_callers": handle_brain_callers,
+    "brain_structure": handle_brain_structure,
 }
 
 # ---------------------------------------------------------------------------

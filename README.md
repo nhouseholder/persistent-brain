@@ -12,7 +12,7 @@ A portable, local-first memory system for AI coding agents. Works across Claude 
 
 ---
 
-## Architecture
+## Architecture (v1.0 — Two-Layer Memory)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -25,16 +25,22 @@ A portable, local-first memory system for AI coding agents. Works across Claude 
                  │   dependencies)│
                  └───────┬────────┘
                          │
-                 ┌───────▼────────┐
-                 │  engram        │
-                 │ (structured)   │
-                 └───────┬────────┘
-                         │
-                 ┌───────▼────────┐
-                 │ SQLite+FTS5    │
-                 │ ~/.engram/     │
-                 └────────────────┘
+          ┌──────────────┼──────────────┐
+          ▼              ▼              ▼
+   ┌──────────┐  ┌──────────────┐  ┌──────────┐
+   │  engram  │  │      CGC     │  │mempalace │
+   │(temporal)│  │ (structural) │  │(verbatim)│
+   │SQLite+   │  │ FalkorDB     │  │ ChromaDB │
+   │FTS5      │  │ Graph        │  │ vectors  │
+   └──────────┘  └──────────────┘  └──────────┘
+                      │
+            Files · Functions · Callers · Complexity · Dead Code
 ```
+
+**Two-layer memory:**
+- **engram** = temporal memory (what we DID) — decisions, bugfixes, preferences
+- **CGC** = structural memory (what the code IS) — call graphs, complexity, dead code
+- **mempalace** = verbatim recall (STRIPPED in v0.5.0 — not operational)
 
 **The agent calls `brain_query` for everything.** The router searches engram (fast, structured, <50ms).
 

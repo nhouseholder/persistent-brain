@@ -1,18 +1,41 @@
 # Persistent Brain — Memory Rules
 
-You have a unified memory system available via the **brain-router** MCP server. It routes queries to engram (structured facts) automatically — you don't need to manage stores manually.
+You have a **two-layer memory system** available via the **brain-router** MCP server:
+
+- **engram** — temporal memory: what we DID, decisions, bugfixes, preferences
+- **CodeGraphContext (CGC)** — structural memory: what the code IS, call graphs, complexity
+
+The router handles routing automatically. You don't need to pick the store manually.
+
+## Two-Layer Decision Tree
+
+```
+Question about...
+├─ Code structure? ("Who calls X?", "Where is Y?", "How complex is Z?")
+│   └─ CGC: brain_diagram, brain_callers, brain_structure
+├─ Past work? ("What did we do about X?", "How did we fix Y?")
+│   └─ engram: brain_query, brain_context
+└─ Both? ("Should we refactor the props pipeline?")
+   └─ CGC first (structural facts), then engram (historical context)
+```
+
 
 ## Tools
 
-| Tool | When to use |
-|---|---|
-| `brain_query` | **ANY** memory lookup — decisions, preferences, past conversations, architecture facts, bug fixes |
-| `brain_save` | Save a structured fact — decisions, preferences, architecture, fix takeaways, deadlines |
-| `brain_context` | Load session-start context (call this before your first reply) |
-| `brain_correct` | Fix a wrong memory — automatically supersedes the old entry |
-| `brain_forget` | Remove a memory the user wants deleted |
+| Tool | Layer | When to use |
+|---|---|---|
+| `brain_query` | engram | **ANY** memory lookup — decisions, preferences, past conversations, architecture facts, bug fixes |
+| `brain_save` | engram | Save a structured fact — decisions, preferences, architecture, fix takeaways, deadlines |
+| `brain_context` | engram | Load session-start context (call this before your first reply) |
+| `brain_correct` | engram | Fix a wrong memory — automatically supersedes the old entry |
+| `brain_forget` | engram | Remove a memory the user wants deleted |
+| `brain_diagram` | CGC | Generate codebase architecture map — files, functions, complexity, dead code |
+| `brain_callers` | CGC | Find who calls a function or uses a symbol |
+| `brain_structure` | CGC | Get repo stats: files, functions, classes, modules |
 
-> **You also have direct access to `engram` MCP tools.** Use the `brain_*` tools by default — fall back to direct engram tools only for advanced operations (timeline, stats, manual session management).
+> **Use `brain_*` tools by default.** Fall back to direct store tools only for advanced operations:
+> - engram: timeline browsing (`mem_timeline`), stats (`mem_stats`), project merge (`mem_merge_projects`)
+> - CGC: detailed complexity analysis, dead code detection, code search
 
 ## Session start protocol
 
