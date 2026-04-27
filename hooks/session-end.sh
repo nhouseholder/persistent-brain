@@ -31,7 +31,15 @@ if command -v sqlite3 >/dev/null 2>&1 && [ -f "$ENGRAM_DB" ]; then
     echo "[unified-brain] ✓ Session timeline closed in engram"
 fi
 
-# ---------- 3. Output session stats ----------
+# ---------- 3. Auto-calibrate pending reasoning tasks ----------
+AUTO_CALIBRATE_SCRIPT="${HOME}/ProjectsHQ/persistent-brain/scripts/auto-calibrate.py"
+if [ -f "$AUTO_CALIBRATE_SCRIPT" ]; then
+    python3 "$AUTO_CALIBRATE_SCRIPT" 2>/dev/null || true
+elif [ -f "${HOME}/.local/bin/auto-calibrate" ]; then
+    auto-calibrate 2>/dev/null || true
+fi
+
+# ---------- 4. Output session stats ----------
 echo ""
 echo "[unified-brain] === Session Stats ==="
 echo "  Project:      $PROJECT_NAME"
@@ -39,7 +47,7 @@ echo "  Started:      ${STARTED_AT:-unknown}"
 echo "  Tool calls:   $TOOL_CALLS"
 echo "  Checkpoints:  $CHECKPOINTS"
 
-# ---------- 4. Suggest next steps ----------
+# ---------- 5. Suggest next steps ----------
 echo ""
 echo "[unified-brain] === Next Steps ==="
 if [ "$TOOL_CALLS" -gt 0 ]; then
@@ -50,13 +58,13 @@ else
 fi
 echo "  → Sync engram: engram sync"
 
-# ---------- 5. Sync engram (background) ----------
+# ---------- 6. Sync engram (background) ----------
 if command -v engram >/dev/null 2>&1; then
     nohup engram sync >/dev/null 2>&1 &
     echo "[unified-brain] ✓ Engram sync started (background)"
 fi
 
-# ---------- 6. Clean up session state ----------
+# ---------- 7. Clean up session state ----------
 if [ -f "$STATE_FILE" ]; then
     # Mark as ended but keep file for reference
     python3 -c "
