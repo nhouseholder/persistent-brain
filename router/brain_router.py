@@ -1142,6 +1142,9 @@ def handle_request(req):
         try:
             tool_name = params.get("name")
             result = handler(params.get("arguments", {}))
+            # Token estimation heuristic: response JSON size / 4 ≈ token count
+            # (1 token ≈ 4 chars for English text; conservative estimate)
+            estimated_tokens = len(json.dumps(result, default=str)) // 4
             # Track tool calls and inject checkpoint suggestion if due
             if HAS_SESSION_MANAGER:
                 session_manager.record_tool_call()
@@ -1150,7 +1153,7 @@ def handle_request(req):
                     result["_checkpoint_suggestion"] = suggestion
             # Track reasoning pulls and inject budget warning if breached
             if HAS_REASONING_TRACKER:
-                reasoning_tracker.record_pull(tool_name)
+                reasoning_tracker.record_pull(tool_name, estimated_tokens)
                 budget_warning = reasoning_tracker.get_budget_warning()
                 if budget_warning:
                     result["_budget_warning"] = budget_warning
