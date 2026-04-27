@@ -1,32 +1,73 @@
 #!/usr/bin/env bash
-# SessionEnd hook — auto-distill via engram context, flush, sync.
-# CRITICAL: Steps that save data run synchronously to prevent data loss on shell exit.
-# Only sync (non-critical) is backgrounded.
+# unified-brain session end hook
+# Closes session timeline, outputs stats, suggests summary.
 set +e
+
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
 
-PROJECT_NAME="$(basename "${OPENCODE_PROJECT_DIR:-${PWD}}")"
+PROJECT_NAME="${BRAIN_PROJECT:-$(basename "${OPENCODE_PROJECT_DIR:-${PWD}}")}"
 ENGRAM_DB="${HOME}/.engram/${PROJECT_NAME}.db"
 [ -f "$ENGRAM_DB" ] || ENGRAM_DB="${HOME}/.engram/engram.db"
+STATE_FILE="${HOME}/.unified-brain/session_state.json"
 
-# ---------- 1. Auto-distill: DISABLED ----------
-# Auto-distill disabled — see docs/specs/2026-04-22-memory-improvement-plan.md
-# Agents must explicitly save structured facts via brain_save.
-# The session-end hook only closes the session timeline and syncs.
+echo "[unified-brain] Session end for project: $PROJECT_NAME"
 
-# ---------- 2. End session in engram timeline ----------
-# CRITICAL: Run synchronously — closes the session timeline properly
+# ---------- 1. Read session stats ----------
+TOOL_CALLS=0
+CHECKPOINTS=0
+STARTED_AT=""
+if [ -f "$STATE_FILE" ]; then
+    TOOL_CALLS=$(python3 -c "import json; print(json.load(open('$STATE_FILE')).get('tool_calls', 0))" 2>/dev/null || echo "0")
+    CHECKPOINTS=$(python3 -c "import json; print(json.load(open('$STATE_FILE')).get('checkpoints', 0))" 2>/dev/null || echo "0")
+    STARTED_AT=$(python3 -c "import json; print(json.load(open('$STATE_FILE')).get('started_at', ''))" 2>/dev/null || echo "")
+fi
+
+# ---------- 2. Close session in engram ----------
 if command -v sqlite3 >/dev/null 2>&1 && [ -f "$ENGRAM_DB" ]; then
-  # Use pattern matching for unique session IDs (hook-${PROJECT_NAME}-*)
-  sqlite3 "$ENGRAM_DB" \
-    "UPDATE sessions SET ended_at = datetime('now') WHERE id LIKE 'hook-${PROJECT_NAME}-%' AND ended_at IS NULL;" \
-    >/dev/null 2>&1
+    # Close any open sessions for this project
+    sqlite3 "$ENGRAM_DB" \
+      "UPDATE sessions SET ended_at = datetime('now') WHERE id LIKE 'session-${PROJECT_NAME}-%' AND ended_at IS NULL;" \
+      >/dev/null 2>&1
+    echo "[unified-brain] ✓ Session timeline closed in engram"
 fi
 
-# ---------- 3. Sync engram chunks ----------
-# Safe to background — non-critical optimization
+# ---------- 3. Output session stats ----------
+echo ""
+echo "[unified-brain] === Session Stats ==="
+echo "  Project:      $PROJECT_NAME"
+echo "  Started:      ${STARTED_AT:-unknown}"
+echo "  Tool calls:   $TOOL_CALLS"
+echo "  Checkpoints:  $CHECKPOINTS"
+
+# ---------- 4. Suggest next steps ----------
+echo ""
+echo "[unified-brain] === Next Steps ==="
+if [ "$TOOL_CALLS" -gt 0 ]; then
+    echo "  → If you haven't already, call brain_session_summary with your session recap."
+    echo "  → Then call brain_session_end to formally close the session."
+else
+    echo "  → No tool calls recorded this session."
+fi
+echo "  → Sync engram: engram sync"
+
+# ---------- 5. Sync engram (background) ----------
 if command -v engram >/dev/null 2>&1; then
-  nohup engram sync >/dev/null 2>&1 &
+    nohup engram sync >/dev/null 2>&1 &
+    echo "[unified-brain] ✓ Engram sync started (background)"
 fi
 
-exit 0
+# ---------- 6. Clean up session state ----------
+if [ -f "$STATE_FILE" ]; then
+    # Mark as ended but keep file for reference
+    python3 -c "
+import json
+with open('$STATE_FILE') as f:
+    s = json.load(f)
+s['ended_at'] = '$(date -u +%Y-%m-%dT%H:%M:%SZ)'
+with open('$STATE_FILE', 'w') as f:
+    json.dump(s, f, indent=2)
+" 2>/dev/null
+fi
+
+echo ""
+echo "[unified-brain] Session end complete."

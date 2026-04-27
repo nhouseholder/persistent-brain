@@ -19,6 +19,21 @@ import sys
 import uuid
 from datetime import datetime, timezone
 
+# Local modules for observation quality and codebase integration
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import auto_linker
+    import observation_validator
+    HAS_VALIDATION = True
+except Exception:
+    HAS_VALIDATION = False
+
+try:
+    import session_manager
+    HAS_SESSION_MANAGER = True
+except Exception:
+    HAS_SESSION_MANAGER = False
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -522,6 +537,74 @@ TOOLS = {
                 "path": {"type": "string", "default": "."}
             }
         }
+    },
+    "brain_codebase_index": {
+        "description": "Index a project into the structural code graph (CodeGraphContext). Run once per project or after major refactors.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Project root path", "default": "."},
+                "force": {"type": "boolean", "description": "Force reindex even if already indexed", "default": False}
+            }
+        }
+    },
+    "brain_codebase_search": {
+        "description": "Hybrid semantic search over codebase symbols (CodeCartographer BM25 + embeddings). Natural language queries like 'function that handles portfolio grading'.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Natural language search query"},
+                "path": {"type": "string", "description": "Project root path", "default": "."},
+                "limit": {"type": "integer", "default": 10}
+            },
+            "required": ["query"]
+        }
+    },
+    "brain_validate": {
+        "description": "Validate an observation before saving. Checks Compiled Truth, Timeline, and Auto-Links format.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "Observation content to validate"},
+                "type": {"type": "string", "description": "Observation type", "default": "manual"}
+            },
+            "required": ["content"]
+        }
+    },
+    "brain_session_start": {
+        "description": "Start a tracked session. Initializes session state for checkpoint monitoring.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Project name", "default": "global"}
+            }
+        }
+    },
+    "brain_session_end": {
+        "description": "End the current tracked session. Returns session stats.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    "brain_checkpoint": {
+        "description": "Save a checkpoint observation. Captures current task, recent actions, and open files.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "Current task description"},
+                "recent_actions": {"type": "array", "items": {"type": "string"}, "description": "List of recent actions"},
+                "open_files": {"type": "array", "items": {"type": "string"}, "description": "List of open files"}
+            },
+            "required": ["task"]
+        }
+    },
+    "brain_session_stats": {
+        "description": "Get current session statistics (elapsed time, tool calls, checkpoints).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {}
+        }
     }
 }
 
@@ -556,9 +639,62 @@ def handle_brain_query(p):
         "warnings": warnings
     }
 
+def _codecartographer_available():
+    """Check if CodeCartographer CLI is installed."""
+    try:
+        subprocess.run(["codecartographer", "--version"], capture_output=True, timeout=3)
+        return True
+    except Exception:
+        return False
+
+
+def _codecartographer_run(args, cwd=None, timeout=60):
+    """Run a codecartographer command and return parsed output."""
+    try:
+        result = subprocess.run(
+            ["codecartographer"] + args,
+            capture_output=True, text=True, timeout=timeout, cwd=cwd
+        )
+        if result.returncode != 0:
+            return {"error": result.stderr or "codecartographer command failed"}
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return {"output": result.stdout}
+    except subprocess.TimeoutExpired:
+        return {"error": f"codecartographer timed out (>{timeout}s)"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def handle_brain_save(p):
-    return engram_save(p["title"], p["content"], type_tag=p.get("type", "manual"),
-                       topic_key=p.get("topic_key"), scope=p.get("scope", "project"))
+    title = p["title"]
+    content = p["content"]
+    type_tag = p.get("type", "manual")
+    topic_key = p.get("topic_key")
+    scope = p.get("scope", "project")
+
+    validation = None
+    if HAS_VALIDATION:
+        # Full validation with auto-fix and enforcement
+        validation = observation_validator.validate(content, type_tag)
+        content = validation["content"]  # Use potentially auto-fixed content
+
+        # Reject if unfixable and enforced
+        if validation["enforce"] and not validation["valid"]:
+            return {
+                "saved": False,
+                "error": f"Observation rejected: {validation['reject_reason']}",
+                "format_validation": validation,
+                "suggestion": "Fix the content and call brain_validate first, or use brain_save with type='manual' (not recommended for code-relevant facts)."
+            }
+
+    result = engram_save(title, content, type_tag=type_tag,
+                         topic_key=topic_key, scope=scope)
+    result["saved"] = True
+    if validation:
+        result["format_validation"] = validation
+    return result
 
 def handle_brain_context(p):
     # Fix #6: Explicit store status
@@ -673,6 +809,169 @@ def handle_brain_structure(p):
     
     return _cgc_run(["stats", path])
 
+
+# ---------------------------------------------------------------------------
+# Phase 2: CodeCartographer integration (subprocess with timeout)
+# ---------------------------------------------------------------------------
+
+def _cc_available():
+    try:
+        subprocess.run(["which", "codecartographer"], capture_output=True, text=True, check=True, timeout=5)
+        return True
+    except Exception:
+        return False
+
+def _cc_run(args: List[str], cwd: str = None, timeout: int = 60):
+    cmd = ["codecartographer"] + args
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout)
+        if result.returncode != 0:
+            return {"error": f"CodeCartographer failed: {result.stderr.strip() or result.stdout.strip()}", "command": " ".join(cmd)}
+        return json.loads(result.stdout) if result.stdout.strip() else {"success": True}
+    except subprocess.TimeoutExpired:
+        return {"error": f"CodeCartographer timed out after {timeout}s", "command": " ".join(cmd)}
+    except json.JSONDecodeError:
+        return {"raw_output": result.stdout.strip(), "command": " ".join(cmd)}
+    except Exception as e:
+        return {"error": str(e), "command": " ".join(cmd)}
+
+def handle_brain_codebase_index(p):
+    """Index a codebase with CGC and generate GRAPH_REPORT.md with CodeCartographer."""
+    path = p.get("path", ".")
+    force = p.get("force_reindex", False)
+    backend = p.get("backend", "memory")
+
+    if not _cgc_available():
+        return {"error": "CodeGraphContext not installed. Install: uv tool install codegraphcontext"}
+    if not _cc_available():
+        return {"error": "CodeCartographer not installed. Install: npm i -g codecartographer"}
+
+    # Step 1: CGC index
+    if force:
+        # Delete old context if exists
+        contexts = _cgc_run(["list"])
+        # CGC doesn't have a direct delete; we re-add which overwrites
+    cgc_result = _cgc_run(["add_code_to_graph", path, "--is-dependency=false"])
+
+    # Step 2: CodeCartographer diagram
+    cc_result = _cc_run(["diagram", path, "--backend", backend], timeout=120)
+
+    return {
+        "source": "codebase_index_pipeline",
+        "path": path,
+        "backend": backend,
+        "cgc_index": cgc_result,
+        "codecartographer_diagram": cc_result,
+        "next_steps": [
+            f"Graph report: {os.path.join(path, '.codecartographer', 'GRAPH_REPORT.md')}",
+            "Use brain_query to search indexed code",
+            "Use brain_diagram to get structural stats"
+        ]
+    }
+
+def handle_brain_codebase_search(p):
+    """Hybrid search across indexed code (BM25 + embeddings + RRF)."""
+    query = p["search_query"]
+    path = p.get("path", ".")
+    limit = p.get("limit", 10)
+
+    if not _cc_available():
+        return {"error": "CodeCartographer not installed"}
+
+    result = _cc_run(["search", query, "--path", path, "--limit", str(limit), "--hybrid"], timeout=60)
+    return {
+        "source": "codecartographer_hybrid_search",
+        "query": query,
+        "path": path,
+        "results": result,
+        "tip": "For temporal context about these symbols, search engram with brain_query"
+    }
+
+def handle_brain_validate(p):
+    """Validate an observation before saving (Compiled Truth + Auto-Links)."""
+    content = p.get("content", "")
+    type_tag = p.get("type", "manual")
+    
+    if HAS_VALIDATION:
+        result = observation_validator.validate(content, type_tag)
+        # Strip the full content from the response to keep it concise
+        result.pop("content", None)
+        return result
+    
+    # Fallback if validator not available
+    errors = []
+    warnings = []
+    if "## Compiled Truth" not in content:
+        errors.append("Missing '## Compiled Truth' section. Required for all observations.")
+    if "## Timeline" not in content:
+        warnings.append("Missing '## Timeline' section. Recommended for tracking history.")
+    
+    potential_files = re.findall(r'[\w\-./]+\.(?:ts|tsx|js|jsx|py|go|rs|java|md)', content)
+    potential_symbols = re.findall(r'`([^`]{3,})`', content)
+    
+    return {
+        "valid": len(errors) == 0,
+        "enforce": len(errors) > 0,
+        "reject_reason": errors[0] if errors else None,
+        "auto_fixes": [],
+        "checks": {
+            "compiled_truth": {"ok": "## Compiled Truth" in content, "message": errors[0] if errors else "OK", "required": True},
+            "timeline": {"ok": "## Timeline" in content, "message": "OK" if "## Timeline" in content else "Missing", "required": False},
+            "auto_links": {"ok": True, "message": "Validator module not available", "required": False},
+        }
+    }
+
+# ---------------------------------------------------------------------------
+# Session management handlers
+# ---------------------------------------------------------------------------
+
+def handle_brain_session_start(p):
+    """Initialize a tracked session for checkpoint monitoring."""
+    if not HAS_SESSION_MANAGER:
+        return {"error": "session_manager module not available"}
+    project = p.get("project", PROJECT_NAME or "global")
+    state = session_manager.init_session(project)
+    return {
+        "session_started": True,
+        "session_id": state.get("session_id"),
+        "project": project,
+        "started_at": state.get("started_at"),
+        "checkpoint_thresholds": {
+            "calls": session_manager.CHECKPOINT_CALLS,
+            "minutes": session_manager.CHECKPOINT_MINUTES
+        }
+    }
+
+def handle_brain_session_end(p):
+    """End the current tracked session."""
+    if not HAS_SESSION_MANAGER:
+        return {"error": "session_manager module not available"}
+    result = session_manager.end_session()
+    return result
+
+def handle_brain_checkpoint(p):
+    """Save a checkpoint observation."""
+    if not HAS_SESSION_MANAGER:
+        return {"error": "session_manager module not available"}
+    project = p.get("project", PROJECT_NAME or "global")
+    task = p.get("task", "unknown task")
+    recent_actions = p.get("recent_actions", [])
+    open_files = p.get("open_files", [])
+    state = session_manager.save_checkpoint(project, task, recent_actions, open_files)
+    return {
+        "checkpoint_saved": True,
+        "session_id": state.get("session_id"),
+        "tool_calls": state.get("tool_calls"),
+        "checkpoints": state.get("checkpoints"),
+        "last_checkpoint_at": state.get("last_checkpoint_at")
+    }
+
+def handle_brain_session_stats(p):
+    """Get current session statistics."""
+    if not HAS_SESSION_MANAGER:
+        return {"error": "session_manager module not available"}
+    return session_manager.get_session_stats()
+
 HANDLERS = {
     "brain_query": handle_brain_query, "brain_save": handle_brain_save,
     "brain_context": handle_brain_context, "brain_correct": handle_brain_correct,
@@ -680,6 +979,13 @@ HANDLERS = {
     "brain_diagram": handle_brain_diagram,
     "brain_callers": handle_brain_callers,
     "brain_structure": handle_brain_structure,
+    "brain_codebase_index": handle_brain_codebase_index,
+    "brain_codebase_search": handle_brain_codebase_search,
+    "brain_validate": handle_brain_validate,
+    "brain_session_start": handle_brain_session_start,
+    "brain_session_end": handle_brain_session_end,
+    "brain_checkpoint": handle_brain_checkpoint,
+    "brain_session_stats": handle_brain_session_stats,
 }
 
 # ---------------------------------------------------------------------------
@@ -689,10 +995,13 @@ HANDLERS = {
 def handle_request(req):
     method, params, rid = req.get("method"), req.get("params", {}), req.get("id")
     if method == "initialize":
+        # Auto-init session if project is known
+        if HAS_SESSION_MANAGER and PROJECT_NAME:
+            session_manager.init_session(PROJECT_NAME)
         return {"jsonrpc": "2.0", "id": rid, "result": {
             "protocolVersion": "2024-11-05",
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "brain-router", "version": "0.4.0"}
+            "serverInfo": {"name": "brain-router", "version": "0.5.0"}
         }}
     if method == "notifications/initialized":
         return None
@@ -707,6 +1016,12 @@ def handle_request(req):
             return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32601, "message": f"Unknown tool: {params.get('name')}"}}
         try:
             result = handler(params.get("arguments", {}))
+            # Track tool calls and inject checkpoint suggestion if due
+            if HAS_SESSION_MANAGER:
+                session_manager.record_tool_call()
+                suggestion = session_manager.get_checkpoint_suggestion()
+                if suggestion:
+                    result["_checkpoint_suggestion"] = suggestion
             return {"jsonrpc": "2.0", "id": rid, "result": {
                 "content": [{"type": "text", "text": json.dumps(result, indent=2, default=str)}]
             }}

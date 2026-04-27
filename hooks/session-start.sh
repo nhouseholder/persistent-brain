@@ -1,29 +1,63 @@
 #!/bin/bash
-# Session start hook for persistent-brain
-# Loads brain_context + checks for CGC codebase diagram
+# unified-brain session start hook
+# Loads context, checks GRAPH_REPORT.md, sets up session tracking.
 
 set -e
 
 PROJECT="${BRAIN_PROJECT:-$(basename "$(pwd)")}"
-echo "[persistent-brain] Session start for project: $PROJECT"
+STATE_DIR="${HOME}/.unified-brain"
+STATE_FILE="${STATE_DIR}/session_state.json"
+GRAPH_REPORT="$(pwd)/.codecartographer/GRAPH_REPORT.md"
 
-# 1. Load temporal context from engram
-echo "[persistent-brain] Loading engram context..."
-# brain_context is called by the agent via MCP — this hook just logs
+echo "[unified-brain] Session start for project: $PROJECT"
 
-# 2. Check for CGC codebase diagram
-echo "[persistent-brain] Checking CodeGraphContext..."
-if command -v cgc &>/dev/null; then
-    if cgc list 2>/dev/null | grep -q "$PROJECT"; then
-        echo "[persistent-brain] ✓ CGC graph found for $PROJECT"
-        echo "[persistent-brain] Stats: $(cgc stats . 2>/dev/null | grep -E 'Files|Functions|Classes' | tr '\n' ' ')"
-    else
-        echo "[persistent-brain] ⚠️ No CGC graph found. Consider indexing:"
-        echo "[persistent-brain]   cgc add_code_to_graph path=. is_dependency=false"
-    fi
+# ---------- 1. Initialize session state ----------
+mkdir -p "$STATE_DIR"
+SESSION_ID="session-${PROJECT}-$(date +%s)"
+cat > "$STATE_FILE" <<EOF
+{
+  "session_id": "$SESSION_ID",
+  "project": "$PROJECT",
+  "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "tool_calls": 0,
+  "last_checkpoint_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "last_checkpoint_calls": 0,
+  "checkpoints": 0
+}
+EOF
+echo "[unified-brain] ✓ Session state: $SESSION_FILE"
+
+# ---------- 2. Check engram DB ----------
+ENGRAM_DB="${HOME}/.engram/${PROJECT}.db"
+[ -f "$ENGRAM_DB" ] || ENGRAM_DB="${HOME}/.engram/engram.db"
+if [ -f "$ENGRAM_DB" ]; then
+    echo "[unified-brain] ✓ Engram DB: $ENGRAM_DB"
 else
-    echo "[persistent-brain] ⚠️ CodeGraphContext not installed. Structural memory unavailable."
-    echo "[persistent-brain]   Install: uv tool install codegraphcontext"
+    echo "[unified-brain] ⚠️ No engram DB found. Run: ./scripts/brain-init.sh $(pwd)"
 fi
 
-echo "[persistent-brain] Session start complete. Agent should now call brain_context."
+# ---------- 3. Check GRAPH_REPORT.md ----------
+if [ -f "$GRAPH_REPORT" ]; then
+    AGE_DAYS=$(echo "$(date +%s) - $(stat -f %m "$GRAPH_REPORT" 2>/dev/null || stat -c %Y "$GRAPH_REPORT" 2>/dev/null)" | bc 2>/dev/null || echo "0")
+    AGE_DAYS=$(echo "$AGE_DAYS / 86400" | bc 2>/dev/null || echo "0")
+    if [ "$AGE_DAYS" -gt 7 ]; then
+        echo "[unified-brain] ⚠️ GRAPH_REPORT.md is ${AGE_DAYS} days old (>7). Consider regenerating:"
+        echo "[unified-brain]   brain_codebase_index(path=\".\", force_reindex=true)"
+    else
+        echo "[unified-brain] ✓ GRAPH_REPORT.md: $GRAPH_REPORT (${AGE_DAYS} days old)"
+    fi
+else
+    echo "[unified-brain] ⚠️ No GRAPH_REPORT.md found. Generate it:"
+    echo "[unified-brain]   brain_codebase_index(path=\".\")"
+fi
+
+# ---------- 4. Agent instructions ----------
+echo ""
+echo "[unified-brain] === Agent Instructions ==="
+echo "  1. Call brain_context before your first reply."
+echo "  2. Call brain_codebase_index --check to load/generate GRAPH_REPORT.md."
+echo "  3. Use brain_validate before brain_save to ensure Compiled Truth + Auto-Links."
+echo "  4. Checkpoint auto-suggested after 10 tool calls or 15 minutes."
+echo "  5. Call brain_session_end before saying 'done'."
+echo ""
+echo "[unified-brain] Session start complete."

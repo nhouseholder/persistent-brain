@@ -1,144 +1,202 @@
-# persistent-brain
+# unified-brain
 
-> **One memory brain. Every agent. Never lost.**
+> **One brain. Three layers. Every agent. Never lost.**
 
-A portable, local-first memory system for AI coding agents. Works across Claude Code, Codex, Qwen Code, Kimi K2 (via Cline/OpenCode), Cursor, Gemini CLI, and anything else speaking MCP.
+A unified, local-first persistent memory system for AI coding agents. Works across Claude Code, Codex, Kimi, Cursor, Qwen, Aider, and anything else speaking MCP.
 
-**The problem.** Every session, your agent forgets. Swap tools (Claude → Qwen) and you lose even more. Claude-only memory systems (e.g., Claude plugins, Supermemory) die the moment you change frontends.
+**The problem.** Every session, your agent forgets. Swap tools (Claude → Kimi) and you lose even more. Frontend-specific memory systems die the moment you change agents.
 
-**The fix.** A unified brain-router that sits on top of engram — structured decisions, preferences, fixes (SQLite + FTS5, one tiny Go binary, git-syncable).
+**The fix.** A unified `brain-router` MCP server that combines three complementary memory stores through one interface:
+- **engram** — temporal memory (what we DID): decisions, bugfixes, preferences, session history
+- **CGC** — structural memory (what the code IS): call graphs, complexity, dead code
+- **CodeCartographer** — enriched structural memory: GRAPH_REPORT.md, hybrid search, typed relationships
 
-**No more routing errors.** The LLM doesn't have to guess which store has the answer.
+**One query, one interface.** The agent never picks the wrong store — the router handles dispatch automatically.
 
 ---
 
-## Architecture (v1.0 — Two-Layer Memory)
+## Architecture (v0.5.0 — Three-Layer Memory)
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Agent (Claude Code / Codex / Qwen / Kimi K2 / Cursor / …)  │
-└────────────────────────┬────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│  Agent (Claude / Codex / Kimi / Cursor / Qwen / …)      │
+└────────────────────────┬────────────────────────────────┘
                          │ MCP stdio
                  ┌───────▼────────┐
-                 │  brain-router  │  ← unified query/save interface
-                 │  (Python, 0    │
+                 │  brain-router  │  ← UNIFIED MCP SERVER
+                 │  (Python, 0    │     15 tools, 0 dependencies
                  │   dependencies)│
                  └───────┬────────┘
                          │
-          ┌──────────────┼──────────────┐
-          ▼              ▼              ▼
-   ┌──────────┐  ┌──────────────┐  ┌──────────┐
-   │  engram  │  │      CGC     │  │mempalace │
-   │(temporal)│  │ (structural) │  │(verbatim)│
-   │SQLite+   │  │ FalkorDB     │  │ ChromaDB │
-   │FTS5      │  │ Graph        │  │ vectors  │
-   └──────────┘  └──────────────┘  └──────────┘
-                      │
-            Files · Functions · Callers · Complexity · Dead Code
+      ┌──────────────────┼──────────────────┐
+      ▼                  ▼                  ▼
+┌──────────┐    ┌──────────────┐    ┌──────────────┐
+│  engram  │    │      CGC     │    │CodeCartographer│
+│(temporal)│    │ (structural) │    │ (enrichment)   │
+│SQLite+   │    │ FalkorDB     │    │ GRAPH_REPORT.md│
+│FTS5      │    │ Graph        │    │ Hybrid search  │
+│Compiled  │    │ Callers      │    │ Typed edges    │
+│Truth+    │    │ Complexity   │    │                │
+│Timeline  │    │ Dead code    │    │                │
+└──────────┘    └──────────────┘    └──────────────┘
 ```
 
-**Two-layer memory:**
-- **engram** = temporal memory (what we DID) — decisions, bugfixes, preferences
-- **CGC** = structural memory (what the code IS) — call graphs, complexity, dead code
-- **mempalace** = verbatim recall (STRIPPED in v0.5.0 — not operational)
+**Three-layer memory:**
+- **engram** = temporal memory — what we DID, decisions, bugfixes, preferences, session history
+- **CGC** = structural memory — what the code IS, call graphs, complexity, dead code
+- **CodeCartographer** = enriched structural memory — GRAPH_REPORT.md generation, hybrid semantic search (BM25 + embeddings + RRF), typed relationships (TESTS/EXPORTS/EXTENDS/IMPLEMENTS)
 
-**The agent calls `brain_query` for everything.** The router searches engram (fast, structured, <50ms).
+---
 
-### Tools
+## Install
 
-| Tool | Purpose |
-|---|---|
-| `brain_query` | Search all memories (structured facts) |
-| `brain_save` | Save a structured fact with conflict detection |
-| `brain_context` | Load session-start context (project + global) |
-| `brain_correct` | Fix a wrong memory (auto-supersedes old entry) |
-| `brain_forget` | Delete a memory |
-
-### Session Lifecycle
-
-```
-session-start.sh          session-end.sh
-      │                         │
-      ▼                         ▼
-  engram.session-start     1. engram.session-end
-  brain_context               (closes session timeline)
-  (load memories)          2. engram.sync
+```bash
+git clone https://github.com/nhouseholder/unified-brain ~/unified-brain
+cd ~/unified-brain
+./install.sh
 ```
 
-**Agents must explicitly save structured facts.** No auto-distillation — quality over quantity.
+Installs:
+- `engram` (Homebrew tap) — temporal memory
+- `cgc` (uv/pipx) — structural graph
+- `codecartographer` (npm) — enriched diagrams + hybrid search
+- `brain-router` (zero-dep Python) — unified MCP server
+- Hooks — session start/end, pre-commit reindex
+
+**Prerequisites:** macOS or Linux, Homebrew, Python 3.10+, Node.js 18+
 
 ---
 
 ## Quickstart
 
 ```bash
-git clone https://github.com/nhouseholder/persistent-brain ~/persistent-brain
-cd ~/persistent-brain
-./install.sh
-```
-
-Installs `engram` (Homebrew tap), `brain-router` (zero-dep Python), hooks (session-start + session-end), and initialises your global brain.
-
-Then, per project:
-
-```bash
+# Per-project init (indexes codebase + generates GRAPH_REPORT.md)
 ./scripts/brain-init.sh ~/ProjectsHQ/my-app
-```
 
-Creates a project-scoped engram DB and drops a `.mcp.json` + `AGENTS.md` into the project so the agent auto-loads brain-router with the right scope.
+# Health check
+./scripts/brain-status.sh
 
-### Inspect what the agent knows
-
-```bash
+# Inspect memories
 ./scripts/brain-inspect.sh my-app
 ```
 
-Shows session context, memory type distribution, recent saves, disk usage, and a map of all project brains grouped by canonical name.
+Then launch your agent from the project directory. The `.mcp.json` file auto-wires brain-router.
 
 ---
 
-## Supported agents
+## 15 MCP Tools
 
-Config snippets in [examples/](examples/):
+| Tool | Store | Purpose |
+|---|---|---|
+| `brain_query` | engram | Search temporal memory (FTS5) |
+| `brain_save` | engram | Save observation with auto-validation |
+| `brain_context` | engram | Load session-start context |
+| `brain_correct` | engram | Fix/update observation |
+| `brain_forget` | engram | Delete observation |
+| `brain_validate` | engram | Validate Compiled Truth + Auto-Links before saving |
+| `brain_diagram` | CGC | Get codebase stats, complexity, dead code |
+| `brain_callers` | CGC | Find who calls a function |
+| `brain_structure` | CGC | Get repo structural stats |
+| `brain_codebase_index` | CGC + CodeCartographer | Index project + generate GRAPH_REPORT.md |
+| `brain_codebase_search` | CodeCartographer | Hybrid semantic search across code |
+| `brain_session_start` | engram | Start tracked session |
+| `brain_session_end` | engram | End tracked session |
+| `brain_checkpoint` | engram | Save checkpoint observation |
+| `brain_session_stats` | engram | Get live session statistics |
 
-| Agent | Setup |
-|---|---|
-| Claude Code | [claude-code-setup.md](examples/claude-code-setup.md) |
-| Codex | [codex-setup.md](examples/codex-setup.md) |
-| Qwen Code | [qwen-setup.md](examples/qwen-setup.md) |
-| Kimi K2 (via Cline/OpenCode) | [kimi-k2-setup.md](examples/kimi-k2-setup.md) |
-| Cursor | [cursor-setup.md](examples/cursor-setup.md) |
-
-Any MCP-capable client works. If yours isn't listed, drop the block from [config/mcp-servers.json](config/mcp-servers.json) into its MCP config.
+Full API reference: [docs/api-reference.md](docs/api-reference.md)
 
 ---
 
-## Routing rules
+## Session Lifecycle (Automated)
 
-The brain-router handles routing automatically. Full explanation: [docs/routing-rules.md](docs/routing-rules.md). Agent instructions: [config/AGENTS.md](config/AGENTS.md).
-
-## Sync across machines
-
-- **engram** — git-sync compressed chunks. See [docs/sync-strategy.md](docs/sync-strategy.md).
-
-## Status + troubleshooting
-
-```bash
-./scripts/brain-status.sh     # health check
-./scripts/brain-inspect.sh    # see what the agent knows
+```
+Agent starts session
+    ↓
+Hook auto-calls:
+  1. brain_context (load recent memories)
+  2. brain_codebase_index --check (load/generate GRAPH_REPORT.md)
+    ↓
+Agent works, calls brain_save after significant work
+  - Auto-validates Compiled Truth format
+  - Auto-extracts Auto-Links
+  - Checkpoint suggested every 10 calls / 15 min
+    ↓
+Agent says "done"
+    ↓
+Hook auto-calls:
+  1. Checkpoint save (if due)
+  2. brain_session_summary (mandatory)
+  3. brain_session_end (mandatory)
 ```
 
-Common issues: [docs/troubleshooting.md](docs/troubleshooting.md).
+---
+
+## Observation Format
+
+All observations use **Compiled Truth + Timeline + Auto-Links**:
+
+```markdown
+## Compiled Truth
+**What**: [concise description]
+**Why**: [reasoning or problem]
+**Where**: [files/paths affected]
+**Learned**: [gotchas or edge cases]
+
+---
+## Timeline
+- 2026-04-26T17:00:00: Initial implementation
+- 2026-04-26T18:00:00: Discovered edge case, fixed
+
+## Auto-Links
+- src/auth/refresh.ts
+- TokenRefreshQueue
+- myproject
+```
+
+`brain_save` auto-fixes missing sections and rejects unfixable observations.
+
+---
+
+## Supported Agents
+
+| Agent | Setup | Status |
+|---|---|---|
+| Claude Code | `~/.claude.json` mcpServers block | ✅ Tested |
+| Codex | `~/.codex/config.toml` | ✅ Tested |
+| Kimi (Kimi CLI) | `~/.kimi/config.toml` | ✅ Tested |
+| Cursor | `.cursor/rules/unified-brain.mdc` | ✅ Tested |
+| OpenCode | `~/.opencode/settings.json` | ✅ Tested |
+| Qwen Code | See docs/agent-setup.md | 🔄 Planned |
+| Aider | See docs/agent-setup.md | 🔄 Planned |
+
+Any MCP-capable client works. Config snippets in [config/mcp-servers.json](config/mcp-servers.json).
+
+---
+
+## Documentation
+
+| Doc | Purpose |
+|---|---|
+| [docs/getting-started.md](docs/getting-started.md) | Step-by-step for new users |
+| [docs/architecture.md](docs/architecture.md) | Technical deep-dive |
+| [docs/agent-setup.md](docs/agent-setup.md) | Per-agent configuration |
+| [docs/api-reference.md](docs/api-reference.md) | Full tool reference |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | Common issues |
+| [config/AGENTS.md](config/AGENTS.md) | Agent instruction protocol |
 
 ---
 
 ## Design Principles
 
-1. **One query, one store.** The agent never picks the wrong store — the router handles dispatch.
-2. **Explicit saves.** Agents must save structured facts manually — quality over quantity.
+1. **One query, one interface.** The agent never picks the wrong store — the router handles dispatch.
+2. **Explicit saves with validation.** Agents must save structured facts manually — but `brain_save` auto-validates and auto-fixes format.
 3. **Conflict detection on write.** Contradictions are caught when saving, not discovered during retrieval.
-4. **Zero external dependencies.** The router is pure Python 3.10+ stdlib. No pip install, no venv.
+4. **Zero external dependencies for the router.** Pure Python 3.10+ stdlib. Stores have their own installers.
 5. **Agent-agnostic.** MCP is the only interface. Any client that speaks MCP gets the full brain.
+6. **Session automation.** Start/end hooks + checkpoint tracking reduce manual bookkeeping.
+
+---
 
 ## License
 
