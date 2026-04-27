@@ -34,6 +34,12 @@ try:
 except Exception:
     HAS_SESSION_MANAGER = False
 
+try:
+    import reasoning_tracker
+    HAS_REASONING_TRACKER = True
+except Exception:
+    HAS_REASONING_TRACKER = False
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -605,6 +611,39 @@ TOOLS = {
             "type": "object",
             "properties": {}
         }
+    },
+    "brain_reason": {
+        "description": "Reasoning gate. Declare mode and get approved budget. Call at start of every non-trivial task.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "proposed_mode": {"type": "string", "enum": ["fast", "deliberate", "slow"], "description": "Proposed reasoning mode"},
+                "justification": {"type": "string", "description": "Why this mode?"},
+                "task_description": {"type": "string", "description": "What are we doing?"}
+            },
+            "required": ["proposed_mode", "justification"]
+        }
+    },
+    "brain_calibrate": {
+        "description": "Auto-save calibration data after DELIBERATE/SLOW tasks. Records mode, pulls, tokens, outcome.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "mode_declared": {"type": "string", "description": "Mode that was used"},
+                "pulls_actual": {"type": "integer", "description": "Actual pulls used"},
+                "tokens_actual": {"type": "integer", "description": "Actual reasoning tokens used (estimate)"},
+                "outcome": {"type": "string", "enum": ["success", "partial", "failure"], "description": "Task outcome"},
+                "would_fast_have_sufficed": {"type": "string", "enum": ["yes", "no", "uncertain"], "description": "Could FAST mode have handled this?"}
+            },
+            "required": ["mode_declared", "outcome"]
+        }
+    },
+    "brain_calibration_stats": {
+        "description": "Get aggregate calibration statistics. Shows fast sufficiency rate, breach rate, slow overuse.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {}
+        }
     }
 }
 
@@ -972,6 +1011,89 @@ def handle_brain_session_stats(p):
         return {"error": "session_manager module not available"}
     return session_manager.get_session_stats()
 
+# ---------------------------------------------------------------------------
+# Reasoning management handlers (Kahneman v3.0)
+# ---------------------------------------------------------------------------
+
+def handle_brain_reason(p):
+    """Reasoning gate — approve mode and return budget."""
+    if not HAS_REASONING_TRACKER:
+        return {"error": "reasoning_tracker module not available"}
+    proposed = p.get("proposed_mode", "fast")
+    justification = p.get("justification", "")
+    task_desc = p.get("task_description", "")
+
+    # Auto-override: if no justification for slow, downgrade to deliberate
+    if proposed == "slow" and len(justification) < 10:
+        return {
+            "approved_mode": "deliberate",
+            "reasoning_budget_tokens": 1500,
+            "evidence_budget_pulls": 1,
+            "native_reasoning": "on",
+            "note": "SLOW mode requires substantive justification. Approved DELIBERATE instead. Escalate to SLOW if fatal flaw found.",
+            "escalation_triggers": ["fatal flaw after pull", "3+ approaches emerge", "security implication discovered"]
+        }
+
+    budget = reasoning_tracker.BUDGETS.get(proposed, reasoning_tracker.BUDGETS["fast"])
+    reasoning_tracker.start_task(proposed, task_desc)
+
+    return {
+        "approved_mode": proposed,
+        "reasoning_budget_tokens": budget["tokens"] if budget["tokens"] else "unlimited",
+        "evidence_budget_pulls": budget["pulls"],
+        "native_reasoning": "off" if proposed == "fast" else "on",
+        "justification_accepted": True,
+        "escalation_triggers": [
+            "3+ viable approaches" if proposed == "fast" else None,
+            "high-stakes architectural impact" if proposed in ("fast", "deliberate") else None,
+            "fatal flaw after pull" if proposed == "deliberate" else None,
+        ]
+    }
+
+def handle_brain_calibrate(p):
+    """Save calibration data after DELIBERATE/SLOW tasks."""
+    if not HAS_REASONING_TRACKER:
+        return {"error": "reasoning_tracker module not available"}
+
+    mode = p.get("mode_declared", "unknown")
+    pulls = p.get("pulls_actual", 0)
+    tokens = p.get("tokens_actual", 0)
+    outcome = p.get("outcome", "unknown")
+    fast_sufficed = p.get("would_fast_have_sufficed", "uncertain")
+
+    # End the task in reasoning tracker
+    task = reasoning_tracker.end_task(outcome)
+
+    # Save to engram
+    content = f"## Compiled Truth\n**What**: Calibration data for {mode} task\n**Why**: Track mode accuracy for future optimization\n**Where**: reasoning_tracker.py\n**Learned**: {fast_sufficed} — FAST mode would have sufficed"
+    if HAS_VALIDATION:
+        content = observation_validator.auto_fix(content, "pattern")[0]
+        content = auto_linker.append_auto_links(content)
+
+    result = engram_save(
+        title=f"Calibration: {mode} task ({outcome})",
+        content=content,
+        type_tag="pattern",
+        topic_key="reasoning/calibration"
+    )
+
+    return {
+        "calibrated": True,
+        "task_id": task.get("task_id"),
+        "mode": mode,
+        "pulls": pulls,
+        "tokens": tokens,
+        "outcome": outcome,
+        "would_fast_have_sufficed": fast_sufficed,
+        "engram_id": result.get("id")
+    }
+
+def handle_brain_calibration_stats(p):
+    """Get aggregate calibration statistics."""
+    if not HAS_REASONING_TRACKER:
+        return {"error": "reasoning_tracker module not available"}
+    return reasoning_tracker.get_calibration_stats()
+
 HANDLERS = {
     "brain_query": handle_brain_query, "brain_save": handle_brain_save,
     "brain_context": handle_brain_context, "brain_correct": handle_brain_correct,
@@ -986,6 +1108,9 @@ HANDLERS = {
     "brain_session_end": handle_brain_session_end,
     "brain_checkpoint": handle_brain_checkpoint,
     "brain_session_stats": handle_brain_session_stats,
+    "brain_reason": handle_brain_reason,
+    "brain_calibrate": handle_brain_calibrate,
+    "brain_calibration_stats": handle_brain_calibration_stats,
 }
 
 # ---------------------------------------------------------------------------
@@ -1001,7 +1126,7 @@ def handle_request(req):
         return {"jsonrpc": "2.0", "id": rid, "result": {
             "protocolVersion": "2024-11-05",
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "brain-router", "version": "0.5.0"}
+            "serverInfo": {"name": "brain-router", "version": "0.6.0"}
         }}
     if method == "notifications/initialized":
         return None
@@ -1015,6 +1140,7 @@ def handle_request(req):
         if not handler:
             return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32601, "message": f"Unknown tool: {params.get('name')}"}}
         try:
+            tool_name = params.get("name")
             result = handler(params.get("arguments", {}))
             # Track tool calls and inject checkpoint suggestion if due
             if HAS_SESSION_MANAGER:
@@ -1022,6 +1148,12 @@ def handle_request(req):
                 suggestion = session_manager.get_checkpoint_suggestion()
                 if suggestion:
                     result["_checkpoint_suggestion"] = suggestion
+            # Track reasoning pulls and inject budget warning if breached
+            if HAS_REASONING_TRACKER:
+                reasoning_tracker.record_pull(tool_name)
+                budget_warning = reasoning_tracker.get_budget_warning()
+                if budget_warning:
+                    result["_budget_warning"] = budget_warning
             return {"jsonrpc": "2.0", "id": rid, "result": {
                 "content": [{"type": "text", "text": json.dumps(result, indent=2, default=str)}]
             }}

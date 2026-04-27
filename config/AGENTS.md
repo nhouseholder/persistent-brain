@@ -151,11 +151,61 @@ Before saying "done" / "that's it" / "finished":
 2. Call `brain_session_summary` with complete Goal/Instructions/Discoveries/Accomplished/Next Steps/Relevant Files.
 3. Call `brain_session_end` to formally close the session.
 
+## Reasoning Contract (Kahneman v3.0)
+
+**Default to FAST.** For 2026 models, native reasoning is OFF by default. Escalate to DELIBERATE or SLOW only with explicit justification.
+
+### Three modes
+
+| Mode | Native reasoning | Evidence pulls | Token budget | When to use |
+|---|---|---|---|---|
+| **FAST** | OFF | 0 pulls | 200 tokens | Clear tasks, familiar patterns, single-file edits, user asked for a specific change |
+| **DELIBERATE** | ON | 1 pull | 1,500 tokens | Multi-file change, unfamiliar domain, user asked "analyze" or "investigate" |
+| **SLOW** | ON | 3 pulls | unlimited | Architecture decisions, high-stakes changes, safety-critical logic, "design" or "refactor" requests |
+
+### How to declare
+
+Call `brain_reason` before starting substantive work:
+
+```
+brain_reason(proposed_mode="fast", justification="", task_description="")
+→ Returns approved mode, budget, and escalation triggers
+```
+
+The router automatically counts evidence pulls (brain_query, brain_diagram, brain_codebase_search, etc.) against your budget.
+
+### Budget enforcement
+
+- **Breach warning**: If you exceed pulls or tokens, the router injects `⚠️ BUDGET BREACH` into the next response. You must declare terminal state (done/ask/escalate) or justify escalation.
+- **Near-limit warning**: At 80% of pull budget, you get a warning to consider wrapping up.
+
+### After SLOW tasks: calibrate
+
+Call `brain_calibrate` after completing a SLOW or DELIBERATE task:
+
+```
+brain_calibrate(task_type="", mode_declared="", pulls_actual=0, tokens_actual=0, outcome="")
+```
+
+This feeds the calibration pipeline so future mode recommendations improve.
+
+### Completion Gate Lite (SLOW mode only)
+
+Before delivering a SLOW-mode answer, answer these 4 questions internally:
+
+1. What is the single most important conclusion?
+2. What is the strongest evidence for it?
+3. What is the strongest evidence against it?
+4. What would change your mind?
+
+If you cannot answer #3 or #4, you have not thought long enough.
+
 ## Token Economy
 
 - `brain_context` is cheap (~2K tokens). Call it every session.
 - `brain_query` searches engram directly (fast, FTS5 full-text search).
 - `brain_validate` is cheap (~500 tokens). Use it before every `brain_save`.
 - `brain_codebase_search` is moderate cost (~3K tokens). Use when you need to find code patterns.
+- `brain_reason` is cheap (~300 tokens). Use it to declare mode and get budget.
 - If you only need a quick fact check, use `brain_query` with the default settings.
 - For chronological context around a specific observation, use `engram_mem_timeline` directly.

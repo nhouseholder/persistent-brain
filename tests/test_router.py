@@ -98,14 +98,14 @@ class TestMCPProtocol:
         assert resp["id"] == 1
         assert "result" in resp
         assert resp["result"]["serverInfo"]["name"] == "brain-router"
-        assert resp["result"]["serverInfo"]["version"] == "0.5.0"
+        assert resp["result"]["serverInfo"]["version"] == "0.6.0"
 
     def test_tools_list(self):
         req = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
         resp = br.handle_request(req)
         assert "result" in resp
         tools = resp["result"]["tools"]
-        assert len(tools) == 15
+        assert len(tools) == 18
         tool_names = {t["name"] for t in tools}
         assert "brain_query" in tool_names
         assert "brain_save" in tool_names

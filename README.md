@@ -15,7 +15,7 @@ A unified, local-first persistent memory system for AI coding agents. Works acro
 
 ---
 
-## Architecture (v0.5.0 — Three-Layer Memory)
+## Architecture (v0.6.0 — Three-Layer Memory + Reasoning)
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -24,7 +24,7 @@ A unified, local-first persistent memory system for AI coding agents. Works acro
                          │ MCP stdio
                  ┌───────▼────────┐
                  │  brain-router  │  ← UNIFIED MCP SERVER
-                 │  (Python, 0    │     15 tools, 0 dependencies
+                 │  (Python, 0    │     18 tools, 0 dependencies
                  │   dependencies)│
                  └───────┬────────┘
                          │
@@ -84,7 +84,7 @@ Then launch your agent from the project directory. The `.mcp.json` file auto-wir
 
 ---
 
-## 15 MCP Tools
+## 18 MCP Tools
 
 | Tool | Store | Purpose |
 |---|---|---|
@@ -103,6 +103,9 @@ Then launch your agent from the project directory. The `.mcp.json` file auto-wir
 | `brain_session_end` | engram | End tracked session |
 | `brain_checkpoint` | engram | Save checkpoint observation |
 | `brain_session_stats` | engram | Get live session statistics |
+| `brain_reason` | — | Declare reasoning mode + get budget |
+| `brain_calibrate` | engram | Save calibration data after SLOW tasks |
+| `brain_calibration_stats` | engram | View calibration aggregates |
 
 Full API reference: [docs/api-reference.md](docs/api-reference.md)
 
@@ -116,8 +119,11 @@ Agent starts session
 Hook auto-calls:
   1. brain_context (load recent memories)
   2. brain_codebase_index --check (load/generate GRAPH_REPORT.md)
+  3. brain_reason (declare FAST/DELIBERATE/SLOW mode + budget)
     ↓
 Agent works, calls brain_save after significant work
+  - Router auto-counts evidence pulls against budget
+  - Budget breach triggers escalation warning
   - Auto-validates Compiled Truth format
   - Auto-extracts Auto-Links
   - Checkpoint suggested every 10 calls / 15 min
